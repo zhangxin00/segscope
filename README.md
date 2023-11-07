@@ -20,4 +20,4 @@ This repository contains the following materials:
 * `enhancing Spectral attack`: contains the code that we use SegScope to enhance a non-interrupt side channel attack (i.e., [spectral](https://github.com/cispa/mwait) ).
 
 ## Contact
-If there are questions regarding these experiments, please send an email to `zhangxin00.stu.pku.edu.cn`.
+If there are questions regarding these experiments, please send an email to `zhangxin00@stu.pku.edu.cn`.
