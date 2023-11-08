@@ -1,3 +1,22 @@
-SegScope can be used to craft a fine-grained timing source. Specifically, given that different types of interrupts present distinguishable statistical characteristics, we can filter out timer interrupts and apply statistical methods such as Z-score. As fine-grained timer interrupts as clock edges contain timestamps, they can serve as a timer. We then leverage the timer to successfully break KASLR within about 10 seconds.
+# SegScope can be used to craft a fine-grained timing source.
 
-Run using  `./main`. It outputs the granularity and stability.
+Build our code.
+```
+make
+```
+
+Run our code. It outputs the granularity and stability.
+```
+./main 
+```
+
+
+
+```
+./main 10 a
+```
+
+The ground truth can be accessed by privileged commonds. For multiple boots, the result of side channel attack should always be equal to the output value, or differ by 0x100000.
+```
+sudo cat /proc/kallsyms | grep _text | head -1
+```
