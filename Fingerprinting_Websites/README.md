@@ -1,6 +1,6 @@
 # Fingerprinting Websites
 
-Uses SegScope to perform a classic interrupt side channel attack.
+Uses SegScope to perform a classic interrupt side channel attack (i.e., website fingerprinting).
 
 Install dependencies.
 ```
