@@ -31,7 +31,7 @@ Throughout our experiments, we successfully evaluated our implementations on the
 | Amazon t2.large (Xen)  | Intel Xeon E5-2686   | Linux 5.15.0    |
 | Amazon c5.large (KVM)  | Intel Xeon 8275CL    | Linux 5.15.0    |
 
- **Note** The enhanced Spectral attack relies on the UMONITOR/UMWAIT instructions that are only available on Intel latest core processors (Tremont and Alder Lake). Please refer to [mwait](https://github.com/cispa/mwait) for more details.
+ **Note:** The enhanced Spectral attack relies on the UMONITOR/UMWAIT instructions that are only available on Intel latest core processors (Tremont and Alder Lake). Please refer to [mwait](https://github.com/cispa/mwait) for more details.
 
 
 ## Materials
