@@ -11,6 +11,7 @@ In order to run the experiments and proof-of-concepts, the following prerequisit
 
 * Linux installation
   * Build tools (gcc, make)
+  * Python 3
 
 * Browsers (for website fingerprinting)
   * Chrome or Tor Browser
