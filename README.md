@@ -16,8 +16,8 @@ In order to run the experiments and proof-of-concepts, the following prerequisit
   * Chrome or Tor Browser
   * You only need to install the drivers for the browsers you would like to use.
 
-- Chrome: Download [here](https://chromedriver.chromium.org/downloads) and add `chromedriver` to your path
-- [Tor Browser](https://www.torproject.org): Install [tor-browser-selenium](https://github.com/webfp/tor-browser-selenium)
+  - Chrome: Download [here](https://chromedriver.chromium.org/downloads) and add `chromedriver` to your path
+  - [Tor Browser](https://www.torproject.org): Install [tor-browser-selenium](https://github.com/webfp/tor-browser-selenium)
 
 ### Hardware dependencies
 Throughout our experiments, we successfully evaluated our implementations on the following environments. We recommend to test SegScope on bare-metal machines.
