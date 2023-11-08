@@ -18,7 +18,7 @@ Record 20 5000-interrupt traces of the top 4 websites according to Alexa, and sa
 python record_data.py --browser chrome --num_runs 20 **--attacker_type tick** --sites_list alexa4 --trace_length 5  --out_directory segscope-experiment
 ```
 
-Load the traces and check accuracy
+Load the traces and check accuracy.
 ```
 python scripts/check_results.py --data_file segscope-experiment
 ```
