@@ -1,4 +1,4 @@
-# SegScope can be used to craft a fine-grained timing source.
+# SegScope-based Timer
 
 Build our code.
 ```
