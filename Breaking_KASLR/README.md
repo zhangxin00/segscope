@@ -7,12 +7,10 @@ To build our code
 make
 ```
 
-Run our prefetch-based attack for 10 times.
+Run our prefetch-based attack for 10 times. The program outputs the top-5 guess results. The measurements for all the 512 possible offsets are shown in `result-512`.
 ```
 ./main 10 p
 ```
-
-The program outputs the top-5 guess results. The measurements for all the 512 possible offsets are shown in `result-512`.
 
 You can also perform access-based attack with our timer. Segment faults that will be incurred are dealt with by a pre-defined userspace handler.
 ```
