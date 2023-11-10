@@ -38,10 +38,9 @@ Throughout our experiments, we successfully evaluated our implementations on the
 ## Materials
 This repository contains the following materials:
 
-* `SegScope-based timer`: contains the code that we exploit timer interrupts to construct a novel timer.
-* `Website Fingerprinting`: contains the code that we apply SegScope to detect interrupts while opening a website.
-* `breaking KASLR`: contains the code that we derandomize KASLR.
-* `enhancing Spectral attack`: contains the code that we use SegScope to enhance a non-interrupt side channel attack (i.e., [spectral](https://github.com/cispa/mwait) ).
+* `E1-Website Fingerprinting`: contains the code that we apply SegScope to detect interrupts while opening a website.
+* `E2-Enhancing Spectral attack`: contains the code that we use SegScope to enhance a non-interrupt side channel attack (i.e., [spectral](https://github.com/cispa/mwait) ).
+* `E3-Breaking KASLR`: contains the code that we rely on SegScope-based timer to derandomize KASLR.
 
 ## Contact
 If there are questions regarding these experiments, please send an email to `zhangxin00@stu.pku.edu.cn`.
