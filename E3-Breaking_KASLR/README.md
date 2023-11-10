@@ -2,9 +2,14 @@
 
 Uses SegScope-based timer to perform a realistic timing side channel attack, which derandomizes KASLR. 
 
-To build our code
+Build our code
 ```
 make
+```
+
+Run our timer. It outputs the granularity and stability. In our paper, the granularity refers to the cost of CPU cycles for one increment of a counter. The stability is the degree to which our timer is affected by system noise.  You can see our timer achieves the same granularity with rdtsc/rdpru.
+```
+./timer
 ```
 
 Run our prefetch-based attack for 10 times. The program outputs the top-5 guess results. The measurements for all the 512 possible offsets are shown in `result-512`.

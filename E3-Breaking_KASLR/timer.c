@@ -16,7 +16,7 @@
 #ifndef _MSC_VER
 #define sscanf_s sscanf
 #endif
-#define T 1000
+#define T 10000
 int cc[T];
 unsigned long long reth1;
 unsigned long long retl0;
@@ -64,7 +64,9 @@ void test_garnularity()
 		"je L\n\t"
 		"mov %%eax, %0" : "=r"(count)
 		);
-		printf("warm-up: %d\n",i);
+		if(i%100==0){
+		printf("[log] warm-up: %d/1000\n",i);
+		}
 
 		}
 	// SegScope-based timer (asm version)
@@ -72,6 +74,9 @@ void test_garnularity()
 	for (i=0; i<T; i++)
 	{
 
+		if(i%100==0){
+		printf("[log] %d/10000\n", i);
+		}
 		unsigned int count=0;
 		prepare();
 		time1=get_cpu_cycle();
@@ -90,7 +95,7 @@ void test_garnularity()
 		"mov %%eax, %0" : "=r"(count)
 		);
 		time2=get_cpu_cycle();
-		printf("%llu,%llu,%lf\n",time2-time1,count,(double)(time2-time1)/count);
+		//printf("%llu,%llu,%lf\n",time2-time1,count,(double)(time2-time1)/count);
 		cc[i]=count;
 		time_sum+=(time2-time1);
 		count_sum+=count;
