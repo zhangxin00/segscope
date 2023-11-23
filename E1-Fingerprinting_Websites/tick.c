@@ -30,7 +30,7 @@ void prepare() {
 }
 
 
-uint16_t get_gs() {
+uint16_t check() {
   uint16_t value;
   __asm__ volatile("mov %%gs, %0" : "=r"(value));
   return value;
@@ -54,7 +54,6 @@ int count_tick()
 {
         int ret,  i,count;
         cpu_set_t get;   
-        uint16_t orig_gs = get_gs();
         CPU_ZERO(&get);	
         pin_cpu3();
     
@@ -82,38 +81,7 @@ int count_tick()
 
 
 }
-int read_addr(int cycles)
-{
-	int i, j, ret = 0, max = -1, maxi = -1,count;
-	unsigned long addr;
-	int base=0x80800000;
-	uint16_t orig_gs = get_gs();
-	set_gs(1);
-        while (get_gs() == 1);
 
-	for (i = 0; i < cycles; i++) {		
-
-     	count=0;
-     		
-     	//get the start of the time slice
-	
-               
-        //use the whole time slice to count
-	set_gs(1);
-  	
-    	while (get_gs() == 1)
-    	{  
-    	++count;
-    	}
-    	set_gs(orig_gs);
-    
-    	inter_count[i]=count;
-		
-	}
-	
-
-	return 0;
-}
 
 static char *progname;
 
@@ -125,35 +93,6 @@ int usage(void)
 
 
 
-
-//just printf
-int compute()
-{
-
-  	double var=0,avg=0,standard;
-  	for(int j=0;j<cycles;j++)
-  	{
-    	 
-   	  avg+=inter_count[j];
-  
-  	}
-   	avg=avg/cycles;
-	for(int j=0;j<cycles;j++)
-  	 {	   
-  	 
-	  var+=pow(inter_count[j]-avg,2)/cycles;
-  	}
-
-  	 standard=pow(var,0.5);
-	for(int j=0;j<cycles;j++)
-	{
-	      printf("%d\n",inter_count[j]);
-	}
-	printf("avg=%f, standard=%f\n",avg,standard);
-	  
-	 
-	return 0;
-}
  
 
 int main(int argc, char *argv[])
@@ -163,10 +102,6 @@ int main(int argc, char *argv[])
         CPU_ZERO(&get);
 	progname = argv[0];
 	if (argc < 2)
-		return usage();
-
-
-	if (sscanf(argv[1], "%d", &cycles) != 1)
 		return usage();
 
 
@@ -185,8 +120,6 @@ int main(int argc, char *argv[])
 	
 	}
 	}
-	read_addr(cycles);
-	compute();
 	return 0;
 	
 	
