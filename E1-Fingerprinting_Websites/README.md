@@ -4,7 +4,7 @@ Uses SegScope to perform a classic interrupt side channel attack (i.e., website 
 
 Install dependencies.
 ```
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 Build the .so file.
