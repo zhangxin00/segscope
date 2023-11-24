@@ -14,9 +14,8 @@ In order to run the experiments and proof-of-concepts, the following prerequisit
   * Python 3
 
 * Browsers (for website fingerprinting)
-  * Chrome or Tor Browser
-  * You only need to install the drivers for the browsers you would like to use.
-
+  * [Chrome Browser](https://www.google.com/chrome/) or [Tor Browser](https://www.torproject.org/download/).
+  * You also need to install the drivers for the browsers you would like to use.
   - Chrome: Download [here](https://chromedriver.chromium.org/downloads) and add `chromedriver` to your path
   - [Tor Browser](https://www.torproject.org): Install [tor-browser-selenium](https://github.com/webfp/tor-browser-selenium)
 
