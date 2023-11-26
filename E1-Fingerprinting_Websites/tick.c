@@ -56,26 +56,18 @@ int count_tick()
         cpu_set_t get;   
         CPU_ZERO(&get);	
         pin_cpu3();
-    
+	
    	if(sched_getaffinity(0,sizeof(get),&get)==-1)
     	{
    	 printf("warning: can not get cpu affinity/n");
     	}
-   
-
-	__asm__ __volatile__(
-		//"CLI\n\t"
-		"mov $0,%%eax\n\t"
-		"T:\n\t" 
-		"incl %%eax\n\t"
-		"mov %%gs,%%ecx\n\t"
-		"cmp $1,%%ecx\n\t" 
-		"je T\n\t"
-		"mov %%eax, %0" : "=r"(count)
-		);
-		
+	
+   	prepare();
+	
+	while(check()==1){
+	count++;
+	}
     	
-
 	return count;
 
 
@@ -91,9 +83,6 @@ int usage(void)
 	return 1;
 }
 
-
-
- 
 
 int main(int argc, char *argv[])
 {
