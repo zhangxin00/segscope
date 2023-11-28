@@ -11,7 +11,7 @@ Quick test for the attack. Every second it outputs the leakage rate, error rate,
 ./main
 ```
 
-Expected results are as follows. The program outputs the error rate of original spectral(%), speed, channel_capacity, number of interrupted measuments, and the error rate of our **enhanced spectral**(%).
+Expected results are as follows. The program outputs the error rate of original spectral(%), speed, channel_capacity, number of interrupted measuments, and the error rate of our **enhanced spectral**(%). Clearly, SegScope reduces the error rate from 0.559% to 0.098%.
 ```
 0.559,53889,51200.8,irq=750 ,after_filter:0.098
 ```
