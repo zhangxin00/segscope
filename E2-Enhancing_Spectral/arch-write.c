@@ -45,7 +45,7 @@ void leakBit(size_t target_addr) {
   int tries = 0, i, j, k, mix_i;
   size_t training_x, x;
      
-  temp&=test[secret[target_addr]*4096];
+  test[secret[target_addr]*4096] ^=1;
   asm volatile("mfence");
   }
 
