@@ -39,7 +39,7 @@ Expected results are as follows:
 105000,0.548,51431,48907.2,irq=748 ,after_filter:0.064
 ```
 
-In our previous experiments, we found that the speculation window is not long enough in Raptor Lake (e.g., your i7-1355U) to complete a transient write (such as modifying a cacheline). These CPUs are unlikely to reproduce original Spectral attack. However, you can use arch-write.c to test how segscope can filter the interrupted measurements. In arch-write.c, we directly modify the corresponding cacheline based on the secret value.
+In our previous experiments, we found that the speculation window is not long enough in certain CPU to complete a transient write (such as modifying a cacheline). These CPUs are unlikely to reproduce original Spectral attack. However, arch-write.c can be used to test how segscope can filter the interrupted measurements. In arch-write.c, we directly modify the corresponding cacheline based on the secret value.
 
 ```
 gcc arch-write.c -lpthread -o arch -static -lm -O0
