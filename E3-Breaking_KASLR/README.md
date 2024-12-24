@@ -8,6 +8,9 @@ make
 ```
 
 Run our timer. It outputs the granularity and stability. In our paper, the granularity refers to the cost of CPU cycles for one increment of a counter. The stability is the degree to which our timer is affected by system noise.  You can see our timer achieves the same granularity with rdtsc/rdpru.
+
+Updated on 2024/12/24: please note that you may need to configure the two parameters to ontain correct results. (#define ACYCLE 1000 and #define PCYCLE 400000)
+
 ```
 ./timer
 ```
