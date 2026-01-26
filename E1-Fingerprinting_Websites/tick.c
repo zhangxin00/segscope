@@ -101,5 +101,10 @@ int main(int argc, char *argv[])
 			printf("this thread %d is running on processor %d\n", gettid(), i);
 		}
 	}
+
+	for (int i = 0; i < 10; i++)
+	{
+           printf("SegCnt: %d\n", count_tick());
+	}
 	return 0;
 }
