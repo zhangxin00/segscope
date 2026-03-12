@@ -14,6 +14,7 @@ In order to run the experiments and proof-of-concepts, the following prerequisit
 * Linux installation
   * Build tools (gcc, make)
   * Python 3
+  * LLVM 18 and Clang 18 (for E4, install via `apt install llvm-18-dev clang-18`)
 
 * Browsers (for website fingerprinting)
   * [Chrome Browser](https://www.google.com/chrome/) or [Tor Browser](https://www.torproject.org/download/).
@@ -44,6 +45,7 @@ This repository contains the following materials:
 * `E1-Website Fingerprinting`: contains the code that we apply SegScope to detect interrupts while opening a website.
 * `E2-Enhancing Spectral attack`: contains the code that we use SegScope to enhance a non-interrupt side channel attack (i.e., [spectral](https://github.com/cispa/mwait) ).
 * `E3-Breaking KASLR`: contains the code that we rely on SegScope-based timer to derandomize KASLR.
+* `E4-Interrupt Detection`: contains an LLVM-based compiler pass that repurposes SegScope's interrupt detection capability as a defence primitive, instrumenting secret-dependent branches with IPI-based monitoring.
 
 ## Contact
 
