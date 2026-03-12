@@ -17,15 +17,9 @@ We evaluate on four real-world applications with known secret-dependent branches
 ## Prerequisites
 
 * Linux x86\_64 (bare-metal recommended)
-* LLVM 18 (`clang-18`, `opt-18`, `llvm-dis-18`)
+* [LLVM 18](https://github.com/llvm/llvm-project/releases/tag/llvmorg-18.1.8) (`clang-18`, `opt-18`, `llvm-dis-18`)
 * CMake 3.16+, GCC/G++ (for kernel module and runtime)
 * Linux kernel headers (for IPI kernel module, optional)
-
-A Dockerfile is provided for quick setup:
-```
-docker build -t intr_detect:llvm18 .
-docker run --rm -it intr_detect:llvm18 bash
-```
 
 ## Step 1: Build the LLVM Pass Plugin
 
@@ -122,7 +116,6 @@ The module supports kernel-thread flood mode at a configurable rate (default 100
 ```
 .
 ├── CMakeLists.txt              # Build system for LLVM pass plugin
-├── Dockerfile                  # LLVM 18 container for easy setup
 ├── src/                        # LLVM pass implementations
 │   ├── AutoInstrumentPass.cpp    # Instruction-level pass + plugin registration
 │   └── IntMonBranchPass.cpp      # Branch monitoring pass (taint, divergence, IPI region)

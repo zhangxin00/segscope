@@ -14,7 +14,7 @@ In order to run the experiments and proof-of-concepts, the following prerequisit
 * Linux installation
   * Build tools (gcc, make)
   * Python 3
-  * LLVM 18 and Clang 18 (for E4, install via `apt install llvm-18-dev clang-18`)
+  * [LLVM 18](https://github.com/llvm/llvm-project/releases/tag/llvmorg-18.1.8) and Clang 18 (for E4, install via `apt install llvm-18-dev clang-18`)
 
 * Browsers (for website fingerprinting)
   * [Chrome Browser](https://www.google.com/chrome/) or [Tor Browser](https://www.torproject.org/download/).
