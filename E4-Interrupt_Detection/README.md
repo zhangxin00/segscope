@@ -84,7 +84,37 @@ Evaluate with IPI injection (requires kernel module, see Step 5):
 ./scripts/known_cases.sh --with-ipi
 ```
 
-The script instruments each library with preset secret-line annotations, runs 10,000 iterations per configuration, and outputs a TSV summary with binary size increase, total overhead (%), and function-level overhead (%).
+The script instruments each library with preset secret-line annotations, runs 100 iterations per program execution by default, and outputs TSV/summary files with binary size increase, total overhead (%), function-level overhead (%), and explicit metadata fields such as `library`, `version`, `algorithm`, `target_branch`, `instrument_mode`, and `ipi_mode`.
+
+## Step 4.5: One-Click Full Matrix Execution
+
+For the complete E4 benchmark matrix, run the top-level one-click script from inside `E4-Interrupt_Detection`:
+
+```
+./run_all.sh
+```
+
+This script:
+
+- automatically checks LLVM 18 / Clang 18 / CMake dependencies and, on Debian/Ubuntu, attempts to install missing packages via `sudo apt-get`
+- automatically triggers first-run downloads of third-party test programs (`mbedtls`, `wolfssl`, `libjpeg`) through `known_cases.sh`
+- automatically checks `/dev/ipi_ctl` and attempts to install/load the IPI kernel module at the start
+- runs the full matrix:
+  - instrumentation modes: `branch / once / block / full`
+  - IPI modes: `noipi / kthread`
+  - run modes: `api / core`
+  - outer repeats: `100`
+
+Outputs are written to:
+
+- `E4-Interrupt_Detection/results/`
+- `E4-Interrupt_Detection/build-base/`
+
+The result root contains a `manifest.tsv` index plus per-combination directories of the form:
+
+```
+results/<variant>/<instr_mode>/rep_<N>/
+```
 
 Expected overhead ranges (branch mode, crypto workloads):
 ```
@@ -131,7 +161,8 @@ The module supports kernel-thread flood mode at a configurable rate (default 100
 ├── scripts/                    # Build, instrument, and benchmark scripts
 │   ├── intmon_demo.sh            # View instrumented IR
 │   ├── intmon_run.sh             # Compile + instrument + run
-│   ├── known_cases.sh            # Full benchmark (~1100 lines)
+│   ├── known_cases.sh            # Full benchmark runner
+│   ├── run_all.sh                # Full matrix runner (100 repeats)
 │   └── ipi_module.sh             # Build/install/uninstall IPI kernel module
 ├── kernel/ipi_kmod/            # IPI kernel module source
 │   ├── ipi_kmod.c
@@ -157,4 +188,5 @@ Pass options via `opt` directly or via `clang -mllvm`:
 * **LLVM 18 required** — the pass uses the new PassManager API (`PassInfoMixin`).
 * **GS segment mode** (`--use-gs`) is available for bare-metal x86\_64 Linux only; use the default TLS mode in containers/VMs.
 * **`known_cases.sh`** downloads third-party sources (~200 MB) on first run; use `--skip-download` afterwards.
+* **`run_all.sh`** is the recommended one-click entry for E4 experiments and defaults to 100 outer repeats.
 * **IPI kernel module** requires root privileges and kernel headers matching the running kernel.
