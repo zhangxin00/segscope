@@ -41,10 +41,11 @@ usage() {
   - --ipi-mode IPI 发送模式（user|kthread|timer|apic，默认 user）
   - --time-source 计时来源（monotonic|tsc，默认 monotonic）
   - --instrument-full 对每条指令插桩（跳过 PHI/调试/生命周期/终结指令）
-  - --iterations 重复执行次数（默认 10000）
+  - --iterations 重复执行次数（默认 100）
   - --ipi-rate IPI 发送频率（次/秒，默认 100000）
   - --ipi-duration IPI 发送时长（秒，默认 2；auto 表示覆盖 B 运行周期）
   - --ipi-warmup-ms 发送端启动后等待时间（毫秒，默认 50）
+  - --random-input 启用随机输入（支持的用例，如 Huffman/Kyber）
   - --ipi-target-cpu 目标 CPU（B 程序绑定核心）
   - --ipi-sender-cpu 发送端绑定核心（需与 target 不同）
   - --ipi-device IPI 设备路径（默认 /dev/ipi_ctl）
@@ -65,12 +66,13 @@ RUN_MODES="both"
 WITH_IPI=0
 IPI_MODE="user"
 INSTR_EVERY=0
-ITERATIONS="${AID_KNOWN_ITERS:-10000}"
+ITERATIONS="${AID_KNOWN_ITERS:-100}"
 TIME_SOURCE="${INTMON_TIME_SOURCE:-monotonic}"
 SYSCALL_FUNCS=""
 SYSCALL_FUNC_PREFIXES=""
 IPI_RATE=100000
 IPI_DURATION=2
+RANDOM_INPUT="${AID_RANDOM_INPUT:-0}"
 IPI_WARMUP_MS=50
 IPI_DEVICE="/dev/ipi_ctl"
 IPI_TARGET_CPU=""
@@ -232,6 +234,10 @@ while [[ $# -gt 0 ]]; do
       IPI_WAIT=1
       shift
       ;;
+    --random-input)
+      RANDOM_INPUT=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -252,6 +258,10 @@ if [[ "${ITERATIONS}" -lt 1 ]]; then
   ITERATIONS=1
 fi
 export AID_KNOWN_ITERS="${ITERATIONS}"
+
+if [[ "${RANDOM_INPUT}" -eq 1 ]]; then
+  export AID_RANDOM_INPUT=1
+fi
 
 case "${RUN_MODES}" in
   both)
@@ -572,6 +582,28 @@ run_with_ipi() {
   wait "${sender_pid}" || true
 }
 
+run_with_selected_condition() {
+  local ipi_log="$1"
+  shift
+
+  local saved_duration="${IPI_DURATION}"
+  local saved_auto="${IPI_DURATION_IS_AUTO}"
+
+  if [[ "${WITH_IPI}" -eq 1 && "${IPI_DURATION}" == "auto" ]]; then
+    IPI_DURATION_IS_AUTO=1
+    IPI_DURATION=0
+  else
+    IPI_DURATION_IS_AUTO=0
+  fi
+
+  run_with_ipi "${ipi_log}" "$@"
+  local rc=$?
+
+  IPI_DURATION="${saved_duration}"
+  IPI_DURATION_IS_AUTO="${saved_auto}"
+  return "${rc}"
+}
+
 LLVM_BIN=""
 if [[ -n "${LLVM_DIR}" && -d "${LLVM_DIR}" ]]; then
   LLVM_PREFIX="$(cd "${LLVM_DIR}/../../.." && pwd 2>/dev/null || true)"
@@ -632,23 +664,53 @@ RESULTS_TSV="${BUILD_DIR}/known_cases_results${OUTPUT_SUFFIX}.tsv"
 SUMMARY_MD="${BUILD_DIR}/known_cases_summary${OUTPUT_SUFFIX}.md"
 RAW_TSV="$(mktemp "${BUILD_DIR}/known_cases_results.raw${OUTPUT_SUFFIX}.XXXX.tsv")"
 trap 'rm -f "${RAW_TSV}"' EXIT
-echo -e "case\trun_mode\tgs_mode\titerations\tsecret_branches\tprepare_call\tprepare_cnt\tcheck_call\tcheck_cnt\tir_path\tbin_size_base\tbin_size_inst\tbin_size_delta\trun_rc\trun_rc_base\tlog_path\tcounts_path\tlog_base_path\tlog_base_func_path\tipi_log_path\ttime_src\ttime_unit\ttime_total\ttime_func\ttime_func_pct\ttime_base_total\ttime_base_func\ttime_base_func_pct\ttime_overhead_pct" > "${RAW_TSV}"
+echo -e "case\tlibrary\tversion\talgorithm\ttarget_branch\tinstrument_mode\tipi_mode\trun_mode\tgs_mode\titerations\tsecret_branches\tprepare_call\tprepare_cnt\tcheck_call\tcheck_cnt\tir_path\tbin_size_base\tbin_size_inst\tbin_size_delta\trun_rc\trun_rc_base\tlog_path\tcounts_path\tlog_base_path\tlog_base_func_path\tipi_log_path\ttime_src\ttime_unit\ttime_total\ttime_func\ttime_func_pct\ttime_base_total\ttime_base_func\ttime_base_func_pct\ttime_overhead_pct" > "${RAW_TSV}"
+
+emit_run_metadata() {
+  local name="$1"
+  local library="$2"
+  local version="$3"
+  local algorithm="$4"
+  local target_branch="$5"
+  local instrument_mode_value="$6"
+  local ipi_mode_value="$7"
+  local run_mode_value="$8"
+  local run_role="$9"
+  local gs_mode="${10}"
+  local iterations="${11}"
+  printf "[known_case_meta] case=%s library=%s version=%s algorithm=%s target_branch=%s instrument_mode=%s ipi_mode=%s run_mode=%s run_role=%s gs_mode=%s iterations=%s\n" \
+    "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "${run_mode_value}" "${run_role}" "${gs_mode}" "${iterations}"
+}
 
 run_case() {
   local name="$1"
-  local src="$2"
-  local outdir="$3"
-  local includes="$4"
-  local cflags="$5"
-  local lines="$6"
-  local main_src="$7"
-  local extra_srcs="${8:-}"
-  local run_modes="${9:-}"
+  local library="$2"
+  local version="$3"
+  local algorithm="$4"
+  local src="$5"
+  local outdir="$6"
+  local includes="$7"
+  local cflags="$8"
+  local lines="$9"
+  local main_src="${10}"
+  local extra_srcs="${11:-}"
+  local run_modes="${12:-}"
   local sec_flags="-ffunction-sections -fdata-sections"
   local gs_mode="tls"
+  local instrument_mode_value="${SECRET_INSTR}"
+  local ipi_mode_value="none"
+  local target_branch
   if [[ "${USE_GS}" -eq 1 ]]; then
     gs_mode="gs"
   fi
+  if [[ "${INSTR_EVERY}" -eq 1 ]]; then
+    instrument_mode_value="full"
+  fi
+  if [[ "${WITH_IPI}" -eq 1 ]]; then
+    ipi_mode_value="${IPI_MODE}"
+  fi
+  target_branch="$(printf "%b" "${lines}" | tr '\n' ',')"
+  target_branch="${target_branch%,}"
 
   mkdir -p "${outdir}"
   rm -f "${outdir}"/*.o
@@ -688,8 +750,8 @@ run_case() {
     "${outdir}/input.bc" -o "${outdir}/instrumented.bc") || opt_rc=$?
   if [[ "${opt_rc}" -ne 0 ]]; then
     echo "[error] opt 插桩失败（rc=${opt_rc}），跳过 ${name}" >&2
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "${name}" "-" "${gs_mode}" "${ITERATIONS}" "OPT_FAIL(${opt_rc})" \
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "-" "${gs_mode}" "${ITERATIONS}" "OPT_FAIL(${opt_rc})" \
       "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" >> "${RAW_TSV}"
     return 0
   fi
@@ -712,10 +774,10 @@ run_case() {
     f2c="${f2cnt}"
   fi
   if [[ -z "${main_src}" ]]; then
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "${name}" "-" "${gs_mode}" "${ITERATIONS}" "see-log" "${f1c}" "${f1cnt}" "${f2c}" "${f2cnt}" \
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "-" "${gs_mode}" "${ITERATIONS}" "see-log" "${f1c}" "${f1cnt}" "${f2c}" "${f2cnt}" \
       "${outdir}/instrumented.ll" "${bin_size_base}" "${bin_size_inst}" "${bin_size_delta}" \
-      "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" >> "${RAW_TSV}"
+      "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" >> "${RAW_TSV}"
   fi
 
   grep -n "__intmon_prepare" "${outdir}/instrumented.ll" | head -n 5 || true
@@ -783,7 +845,8 @@ run_case() {
         local func_time_base="-"
         local func_pct_base="-"
         local rc_base=0
-        (run_with_taskset "${outdir}/case_base.out" "${mode}" 2>&1 | tee "${log_base}") || rc_base=${PIPESTATUS[0]}
+        local ipi_log_base="${outdir}/ipi_${mode}_base.log"
+        ({ emit_run_metadata "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "${mode}" "baseline_total" "${gs_mode}" "${ITERATIONS}"; run_with_selected_condition "${ipi_log_base}" "${outdir}/case_base.out" "${mode}"; } 2>&1 | tee "${log_base}") || rc_base=${PIPESTATUS[0]}
         local time_line_base
         time_line_base="$(grep "\\[intmon\\] time" "${log_base}" | tail -n 1 || true)"
         if [[ -n "${time_line_base}" ]]; then
@@ -791,28 +854,20 @@ run_case() {
         fi
         local rc_base_func=0
         local ipi_log_base_func="${outdir}/ipi_${mode}_base_func.log"
-        (run_with_ipi "${ipi_log_base_func}" "${outdir}/case_func.out" "${mode}" 2>&1 | tee "${log_base_func}") || rc_base_func=${PIPESTATUS[0]}
-        local time_line_base_func
-        time_line_base_func="$(grep "\\[intmon\\] time" "${log_base_func}" | tail -n 1 || true)"
-        if [[ -n "${time_line_base_func}" ]]; then
-          func_time_base="$(extract_first_kv "${time_line_base_func}" func_ns func_ticks func)"
-          func_pct_base="$(extract_kv "${time_line_base_func}" func_pct)"
+        if [[ -f "${outdir}/case_func.out" ]]; then
+          ({ emit_run_metadata "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "${mode}" "baseline_func" "${gs_mode}" "${ITERATIONS}"; run_with_selected_condition "${ipi_log_base_func}" "${outdir}/case_func.out" "${mode}"; } 2>&1 | tee "${log_base_func}") || rc_base_func=${PIPESTATUS[0]}
+          local time_line_base_func
+          time_line_base_func="$(grep "\\[intmon\\] time" "${log_base_func}" | tail -n 1 || true)"
+          if [[ -n "${time_line_base_func}" ]]; then
+            func_time_base="$(extract_first_kv "${time_line_base_func}" func_ns func_ticks func)"
+            func_pct_base="$(extract_kv "${time_line_base_func}" func_pct)"
+          fi
         fi
         [[ -z "${total_time_base}" ]] && total_time_base="-"
         [[ -z "${func_time_base}" ]] && func_time_base="-"
         [[ -z "${func_pct_base}" ]] && func_pct_base="-"
 
-        local ipi_duration_saved="${IPI_DURATION}"
-        local ipi_auto_saved="${IPI_DURATION_IS_AUTO}"
-        if [[ "${IPI_DURATION}" == "auto" ]]; then
-          IPI_DURATION_IS_AUTO=1
-          IPI_DURATION=0
-        else
-          IPI_DURATION_IS_AUTO=0
-        fi
-        (run_with_ipi "${ipi_log}" "${outdir}/case.out" "${mode}" 2>&1 | tee "${log_file}") || rc=${PIPESTATUS[0]}
-        IPI_DURATION="${ipi_duration_saved}"
-        IPI_DURATION_IS_AUTO="${ipi_auto_saved}"
+        ({ emit_run_metadata "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "${mode}" "instrumented" "${gs_mode}" "${ITERATIONS}"; run_with_selected_condition "${ipi_log}" "${outdir}/case.out" "${mode}"; } 2>&1 | tee "${log_file}") || rc=${PIPESTATUS[0]}
         grep "\\[intmon\\] COUNT" "${log_file}" > "${counts_file}" || true
         local time_line
         local time_src="-"
@@ -839,8 +894,8 @@ run_case() {
           overhead_pct="$(awk -v i="${total_time}" -v b="${total_time_base}" 'BEGIN{printf("%.2f", (i-b)*100.0/b)}')"
         fi
 
-        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-          "${name}" "${mode}" "${gs_mode}" "${ITERATIONS}" "see-log" "${f1c}" "${f1cnt}" "${f2c}" "${f2cnt}" \
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+          "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "${mode}" "${gs_mode}" "${ITERATIONS}" "see-log" "${f1c}" "${f1cnt}" "${f2c}" "${f2cnt}" \
           "${outdir}/instrumented.ll" "${bin_size_base}" "${bin_size_inst}" "${bin_size_delta}" \
           "${rc:-0}" "${rc_base:-0}" "${log_file}" "${counts_file}" "${log_base}" "${log_base_func}" "${ipi_log}" \
           "${time_src}" "${time_unit}" "${total_time}" "${func_time}" "${func_pct}" "${total_time_base}" "${func_time_base}" "${func_pct_base}" \
@@ -859,7 +914,8 @@ run_case() {
       local func_time_base="-"
       local func_pct_base="-"
       local rc_base=0
-      (run_with_taskset "${outdir}/case_base.out" 2>&1 | tee "${log_base}") || rc_base=${PIPESTATUS[0]}
+      local ipi_log_base="${outdir}/ipi_default_base.log"
+      ({ emit_run_metadata "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "default" "baseline_total" "${gs_mode}" "${ITERATIONS}"; run_with_selected_condition "${ipi_log_base}" "${outdir}/case_base.out"; } 2>&1 | tee "${log_base}") || rc_base=${PIPESTATUS[0]}
       local time_line_base
       time_line_base="$(grep "\\[intmon\\] time" "${log_base}" | tail -n 1 || true)"
       if [[ -n "${time_line_base}" ]]; then
@@ -867,28 +923,20 @@ run_case() {
       fi
       local rc_base_func=0
       local ipi_log_base_func="${outdir}/ipi_default_base_func.log"
-      (run_with_ipi "${ipi_log_base_func}" "${outdir}/case_func.out" 2>&1 | tee "${log_base_func}") || rc_base_func=${PIPESTATUS[0]}
-      local time_line_base_func
-      time_line_base_func="$(grep "\\[intmon\\] time" "${log_base_func}" | tail -n 1 || true)"
-      if [[ -n "${time_line_base_func}" ]]; then
-        func_time_base="$(extract_first_kv "${time_line_base_func}" func_ns func_ticks func)"
-        func_pct_base="$(extract_kv "${time_line_base_func}" func_pct)"
+      if [[ -f "${outdir}/case_func.out" ]]; then
+        ({ emit_run_metadata "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "default" "baseline_func" "${gs_mode}" "${ITERATIONS}"; run_with_selected_condition "${ipi_log_base_func}" "${outdir}/case_func.out"; } 2>&1 | tee "${log_base_func}") || rc_base_func=${PIPESTATUS[0]}
+        local time_line_base_func
+        time_line_base_func="$(grep "\\[intmon\\] time" "${log_base_func}" | tail -n 1 || true)"
+        if [[ -n "${time_line_base_func}" ]]; then
+          func_time_base="$(extract_first_kv "${time_line_base_func}" func_ns func_ticks func)"
+          func_pct_base="$(extract_kv "${time_line_base_func}" func_pct)"
+        fi
       fi
       [[ -z "${total_time_base}" ]] && total_time_base="-"
       [[ -z "${func_time_base}" ]] && func_time_base="-"
       [[ -z "${func_pct_base}" ]] && func_pct_base="-"
 
-      local ipi_duration_saved="${IPI_DURATION}"
-      local ipi_auto_saved="${IPI_DURATION_IS_AUTO}"
-      if [[ "${IPI_DURATION}" == "auto" ]]; then
-        IPI_DURATION_IS_AUTO=1
-        IPI_DURATION=0
-      else
-        IPI_DURATION_IS_AUTO=0
-      fi
-      (run_with_ipi "${ipi_log}" "${outdir}/case.out" 2>&1 | tee "${log_file}") || rc=${PIPESTATUS[0]}
-      IPI_DURATION="${ipi_duration_saved}"
-      IPI_DURATION_IS_AUTO="${ipi_auto_saved}"
+      ({ emit_run_metadata "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "default" "instrumented" "${gs_mode}" "${ITERATIONS}"; run_with_selected_condition "${ipi_log}" "${outdir}/case.out"; } 2>&1 | tee "${log_file}") || rc=${PIPESTATUS[0]}
       grep "\\[intmon\\] COUNT" "${log_file}" > "${counts_file}" || true
       local time_line
       local time_src="-"
@@ -915,8 +963,8 @@ run_case() {
         overhead_pct="$(awk -v i="${total_time}" -v b="${total_time_base}" 'BEGIN{printf("%.2f", (i-b)*100.0/b)}')"
       fi
 
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-        "${name}" "default" "${gs_mode}" "${ITERATIONS}" "see-log" "${f1c}" "${f1cnt}" "${f2c}" "${f2cnt}" \
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "default" "${gs_mode}" "${ITERATIONS}" "see-log" "${f1c}" "${f1cnt}" "${f2c}" "${f2cnt}" \
         "${outdir}/instrumented.ll" "${bin_size_base}" "${bin_size_inst}" "${bin_size_delta}" \
         "${rc:-0}" "${rc_base:-0}" "${log_file}" "${counts_file}" "${log_base}" "${log_base_func}" "${ipi_log}" \
         "${time_src}" "${time_unit}" "${total_time}" "${func_time}" "${func_pct}" "${total_time_base}" "${func_time_base}" "${func_pct_base}" \
@@ -929,6 +977,7 @@ run_case() {
 }
 
 run_case "MbedTLS 2.6.1 bignum.c" \
+  "mbedtls" "2.6.1" "RSA" \
   "${THIRD_DIR}/mbedtls-2.6.1/library/bignum.c" \
   "${BUILD_DIR}/mbedtls-2.6.1" \
   "-I${THIRD_DIR}/mbedtls-2.6.1/include -I${THIRD_DIR}/mbedtls-2.6.1/library" \
@@ -939,6 +988,7 @@ run_case "MbedTLS 2.6.1 bignum.c" \
   "${RUN_MODES}"
 
 run_case "MbedTLS 3.6.1 bignum.c" \
+  "mbedtls" "3.6.1" "RSA" \
   "${THIRD_DIR}/mbedtls-3.6.1/library/bignum.c" \
   "${BUILD_DIR}/mbedtls-3.6.1" \
   "-I${THIRD_DIR}/mbedtls-3.6.1/include -I${THIRD_DIR}/mbedtls-3.6.1/library" \
@@ -948,7 +998,30 @@ run_case "MbedTLS 3.6.1 bignum.c" \
   "${THIRD_DIR}/mbedtls-3.6.1/library/bignum_core.c ${THIRD_DIR}/mbedtls-3.6.1/library/bignum_mod.c ${THIRD_DIR}/mbedtls-3.6.1/library/bignum_mod_raw.c ${THIRD_DIR}/mbedtls-3.6.1/library/platform_util.c ${THIRD_DIR}/mbedtls-3.6.1/library/constant_time.c ${THIRD_DIR}/mbedtls-3.6.1/library/rsa.c ${THIRD_DIR}/mbedtls-3.6.1/library/rsa_alt_helpers.c" \
   "${RUN_MODES}"
 
+run_case "MbedTLS 3.6.1 bignum.c (DHM)" \
+  "mbedtls" "3.6.1" "DH" \
+  "${THIRD_DIR}/mbedtls-3.6.1/library/bignum.c" \
+  "${BUILD_DIR}/mbedtls-3.6.1-dhm" \
+  "-I${THIRD_DIR}/mbedtls-3.6.1/include -I${THIRD_DIR}/mbedtls-3.6.1/library" \
+  "" \
+  "bignum.c:1823\nbignum.c:1959" \
+  "${ROOT_DIR}/examples/known_cases/mbedtls_3_6_1_dhm_main.c" \
+  "${THIRD_DIR}/mbedtls-3.6.1/library/dhm.c ${THIRD_DIR}/mbedtls-3.6.1/library/asn1parse.c ${THIRD_DIR}/mbedtls-3.6.1/library/pem.c ${THIRD_DIR}/mbedtls-3.6.1/library/bignum_core.c ${THIRD_DIR}/mbedtls-3.6.1/library/bignum_mod.c ${THIRD_DIR}/mbedtls-3.6.1/library/bignum_mod_raw.c ${THIRD_DIR}/mbedtls-3.6.1/library/platform_util.c ${THIRD_DIR}/mbedtls-3.6.1/library/constant_time.c" \
+  "${RUN_MODES}"
+
+run_case "MbedTLS 3.6.1 bignum.c (ECDSA)" \
+  "mbedtls" "3.6.1" "ECDSA" \
+  "${THIRD_DIR}/mbedtls-3.6.1/library/bignum.c" \
+  "${BUILD_DIR}/mbedtls-3.6.1-ecdsa" \
+  "-I${THIRD_DIR}/mbedtls-3.6.1/include -I${THIRD_DIR}/mbedtls-3.6.1/library" \
+  "" \
+  "bignum.c:1823\nbignum.c:1959" \
+  "${ROOT_DIR}/examples/known_cases/mbedtls_3_6_1_ecdsa_main.c" \
+  "${THIRD_DIR}/mbedtls-3.6.1/library/ecdsa.c ${THIRD_DIR}/mbedtls-3.6.1/library/ecp.c ${THIRD_DIR}/mbedtls-3.6.1/library/ecp_curves.c ${THIRD_DIR}/mbedtls-3.6.1/library/bignum_core.c ${THIRD_DIR}/mbedtls-3.6.1/library/bignum_mod.c ${THIRD_DIR}/mbedtls-3.6.1/library/bignum_mod_raw.c ${THIRD_DIR}/mbedtls-3.6.1/library/platform_util.c ${THIRD_DIR}/mbedtls-3.6.1/library/constant_time.c" \
+  "${RUN_MODES}"
+
 run_case "WolfSSL 5.7.2 integer.c" \
+  "wolfssl" "5.7.2" "RSA" \
   "${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/integer.c" \
   "${BUILD_DIR}/wolfssl-5.7.2" \
   "-I${THIRD_DIR}/wolfssl-5.7.2 -I${THIRD_DIR}/wolfssl-5.7.2/wolfssl" \
@@ -963,7 +1036,8 @@ if [[ ! -f "${THIRD_DIR}/jpeg-9f/jconfig.h" ]]; then
   cp "${THIRD_DIR}/jpeg-9f/jconfig.txt" "${THIRD_DIR}/jpeg-9f/jconfig.h"
 fi
 
-run_case "Libjpeg 9f jidctint.c" \
+  run_case "Libjpeg 9f jidctint.c" \
+  "libjpeg" "9f" "JPEG_IDCT" \
   "${THIRD_DIR}/jpeg-9f/jidctint.c" \
   "${BUILD_DIR}/jpeg-9f" \
   "-I${THIRD_DIR}/jpeg-9f" \
@@ -973,14 +1047,16 @@ run_case "Libjpeg 9f jidctint.c" \
   "${THIRD_DIR}/jpeg-9f/jdapimin.c ${THIRD_DIR}/jpeg-9f/jdapistd.c ${THIRD_DIR}/jpeg-9f/jdatasrc.c ${THIRD_DIR}/jpeg-9f/jdmaster.c ${THIRD_DIR}/jpeg-9f/jdinput.c ${THIRD_DIR}/jpeg-9f/jdmarker.c ${THIRD_DIR}/jpeg-9f/jdhuff.c ${THIRD_DIR}/jpeg-9f/jdmainct.c ${THIRD_DIR}/jpeg-9f/jdcoefct.c ${THIRD_DIR}/jpeg-9f/jdpostct.c ${THIRD_DIR}/jpeg-9f/jdsample.c ${THIRD_DIR}/jpeg-9f/jddctmgr.c ${THIRD_DIR}/jpeg-9f/jquant1.c ${THIRD_DIR}/jpeg-9f/jquant2.c ${THIRD_DIR}/jpeg-9f/jdcolor.c ${THIRD_DIR}/jpeg-9f/jcomapi.c ${THIRD_DIR}/jpeg-9f/jerror.c ${THIRD_DIR}/jpeg-9f/jutils.c ${THIRD_DIR}/jpeg-9f/jmemmgr.c ${THIRD_DIR}/jpeg-9f/jmemnobs.c ${THIRD_DIR}/jpeg-9f/jdmerge.c ${THIRD_DIR}/jpeg-9f/jdarith.c ${THIRD_DIR}/jpeg-9f/jaricom.c ${THIRD_DIR}/jpeg-9f/jidctfst.c ${THIRD_DIR}/jpeg-9f/jidctflt.c" \
   "${RUN_MODES}"
 
+
+
 echo
 echo "结果汇总: ${RESULTS_TSV}"
 
 build_final_tsv() {
   local raw_tsv="$1"
   local out_tsv="$2"
-  echo -e "case\tmode\tgs\titerations\trc\trc_base\tprepare\tprepare_total\tcheck\tcheck_total\tinterrupt_detect\tipi_count\tipi_handled\tipi_rate\tipi_elapsed\tipi_target\tipi_sender\tbin_size_base\tbin_size_inst\tbin_size_delta\ttime_src\ttime_unit\ttotal_time\tbase_total_time\toverhead_pct\tfunc_time\tbase_func_time\tfunc_overhead_pct\tlog\tcounts\tlog_base\tlog_base_func\tipi_log" > "${out_tsv}"
-  while IFS=$'\t' read -r case mode gs iterations secret_branches prepare_call prepare_cnt \
+  echo -e "case\tlibrary\tversion\talgorithm\ttarget_branch\tinstrument_mode\tipi_mode\tmode\tgs\titerations\trc\trc_base\tprepare\tprepare_total\tcheck\tcheck_total\tinterrupt_detect\tipi_count\tipi_handled\tipi_rate\tipi_elapsed\tipi_target\tipi_sender\tbin_size_base\tbin_size_inst\tbin_size_delta\ttime_src\ttime_unit\ttotal_time\tbase_total_time\toverhead_pct\tfunc_time\tbase_func_time\tfunc_overhead_pct\tlog\tcounts\tlog_base\tlog_base_func\tipi_log" > "${out_tsv}"
+  while IFS=$'\t' read -r case library version algorithm target_branch instrument_mode ipi_mode mode gs iterations secret_branches prepare_call prepare_cnt \
       check_call check_cnt ir_path bin_size_base bin_size_inst bin_size_delta \
       run_rc run_rc_base log_path counts_path log_base_path log_base_func_path \
       ipi_log_path time_src time_unit total_time func_time func_pct total_time_base func_time_base func_pct_base \
@@ -1020,8 +1096,8 @@ build_final_tsv() {
     if [[ "${func_time}" =~ ^[0-9]+$ && "${func_time_base}" =~ ^[0-9]+$ && "${func_time_base}" -gt 0 ]]; then
       func_overhead_pct="$(awk -v i="${func_time}" -v b="${func_time_base}" 'BEGIN{printf("%.2f", (i-b)*100.0/b)}')"
     fi
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "${case}" "${mode}" "${gs}" "${iterations}" "${run_rc}" "${run_rc_base}" "${prepare_call}" "${prepare_total}" \
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "${case}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode}" "${ipi_mode}" "${mode}" "${gs}" "${iterations}" "${run_rc}" "${run_rc_base}" "${prepare_call}" "${prepare_total}" \
       "${check_call}" "${check_total}" "${interrupt_detect}" \
       "${ipi_count}" "${ipi_handled}" "${ipi_rate}" "${ipi_elapsed}" "${ipi_target}" "${ipi_sender}" \
       "${bin_size_base}" "${bin_size_inst}" "${bin_size_delta}" \
@@ -1038,25 +1114,27 @@ append_counts_log_summary() {
   echo
   echo "_说明：以下统计来自 counts/log 文件本身；若路径不可用则标记为 N/A。_"
   echo
-  while IFS=$'\t' read -r case mode gs iterations rc rc_base prepare prepare_total \
+  while IFS=$'\t' read -r case library version algorithm target_branch instrument_mode ipi_mode mode gs iterations rc rc_base prepare prepare_total \
       check check_total interrupt_detect ipi_count ipi_handled ipi_rate ipi_elapsed ipi_target ipi_sender \
       bin_size_base bin_size_inst bin_size_delta time_src time_unit total_time total_time_base overhead_pct \
       func_time func_time_base func_overhead_pct log_path counts_path log_base_path log_base_func_path ipi_log_path; do
     if [[ "${case}" == "case" ]]; then
       continue
     fi
-    echo "### ${case} | ${mode} | ${gs}"
+    echo "### ${case} | ${algorithm} | ${mode} | ${gs}"
     echo
     if [[ -n "${counts_path}" && -f "${counts_path}" ]]; then
       local prepare_ids check_pairs top_prepare top_check
       prepare_ids=$(awk '/COUNT prepare/ {for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="id"){ids[a[2]]=1}}} END{for(k in ids){c++} print c+0}' "${counts_path}")
       check_pairs=$(awk '/COUNT check/ {id=""; path=""; for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="id"){id=a[2]} if(a[1]=="path"){path=a[2]}} if(id!="" && path!=""){pairs[id ":" path]=1}} END{for(k in pairs){c++} print c+0}' "${counts_path}")
-      top_prepare=$(awk '/COUNT prepare/ {id=""; tot=""; for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="id"){id=a[2]} if(a[1]=="total"){tot=a[2]}} if(id!="" && tot!=""){printf("%s\t%s\n",id,tot)}}' "${counts_path}" \
+      top_prepare="$({ awk '/COUNT prepare/ {id=""; tot=""; for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="id"){id=a[2]} if(a[1]=="total"){tot=a[2]}} if(id!="" && tot!=""){printf("%s\t%s\n",id,tot)}}' "${counts_path}" \
         | sort -t$'\t' -k2,2nr | head -n 3 \
-        | awk 'BEGIN{ORS=""} {if(NR>1) printf(", "); printf("id=%s:%s",$1,$2)} END{if(NR==0) print "-"}')
-      top_check=$(awk '/COUNT check/ {id=""; path=""; tot=""; for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="id"){id=a[2]} if(a[1]=="path"){path=a[2]} if(a[1]=="total"){tot=a[2]}} if(id!="" && path!="" && tot!=""){printf("%s\t%s\t%s\n",id,path,tot)}}' "${counts_path}" \
+        | awk 'BEGIN{ORS=""} {if(NR>1) printf(", "); printf("id=%s:%s",$1,$2)} END{if(NR==0) print "-"}'; } || true)"
+      top_check="$({ awk '/COUNT check/ {id=""; path=""; tot=""; for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="id"){id=a[2]} if(a[1]=="path"){path=a[2]} if(a[1]=="total"){tot=a[2]}} if(id!="" && path!="" && tot!=""){printf("%s\t%s\t%s\n",id,path,tot)}}' "${counts_path}" \
         | sort -t$'\t' -k3,3nr | head -n 3 \
-        | awk 'BEGIN{ORS=""} {if(NR>1) printf(", "); printf("id=%s path=%s:%s",$1,$2,$3)} END{if(NR==0) print "-"}')
+        | awk 'BEGIN{ORS=""} {if(NR>1) printf(", "); printf("id=%s path=%s:%s",$1,$2,$3)} END{if(NR==0) print "-"}'; } || true)"
+      [[ -z "${top_prepare}" ]] && top_prepare="-"
+      [[ -z "${top_check}" ]] && top_check="-"
       echo "- counts: prepare_total=${prepare_total}; prepare_ids=${prepare_ids}; check_total=${check_total}; check_pairs=${check_pairs}"
       echo "- top_prepare: ${top_prepare}"
       echo "- top_check: ${top_check}"
@@ -1092,6 +1170,10 @@ append_field_desc() {
   echo
   cat <<'EOF'
 - case: 用例名称
+- library/version/algorithm: 库名、版本、密码算法（算法作为最终汇总表的一列元数据）
+- target_branch: 目标敏感分支列表（逗号分隔）
+- instrument_mode: 插桩模式（branch/once/block/full）
+- ipi_mode: IPI 模式（none/kthread/...）
 - mode: 运行模式（api/core）
 - gs: GS 模式（gs/tls）
 - iterations: 重复执行次数
@@ -1121,17 +1203,17 @@ build_final_tsv "${RAW_TSV}" "${RESULTS_TSV}"
   echo
   echo "Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
   echo
-  echo "|case|mode|gs|iterations|rc|rc_base|prepare|prepare_total|check|check_total|interrupt_detect|ipi_count|ipi_handled|ipi_rate|ipi_elapsed|ipi_target|ipi_sender|bin_size_base|bin_size_inst|bin_size_delta|time_src|time_unit|total_time|base_total_time|overhead_pct|func_time|base_func_time|func_overhead_pct|log|counts|log_base|log_base_func|ipi_log|"
-  echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
-  while IFS=$'\t' read -r case mode gs iterations rc rc_base prepare prepare_total \
+  echo "|case|library|version|algorithm|target_branch|instrument_mode|ipi_mode|mode|gs|iterations|rc|rc_base|prepare|prepare_total|check|check_total|interrupt_detect|ipi_count|ipi_handled|ipi_rate|ipi_elapsed|ipi_target|ipi_sender|bin_size_base|bin_size_inst|bin_size_delta|time_src|time_unit|total_time|base_total_time|overhead_pct|func_time|base_func_time|func_overhead_pct|log|counts|log_base|log_base_func|ipi_log|"
+  echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+  while IFS=$'\t' read -r case library version algorithm target_branch instrument_mode ipi_mode mode gs iterations rc rc_base prepare prepare_total \
       check check_total interrupt_detect ipi_count ipi_handled ipi_rate ipi_elapsed ipi_target ipi_sender \
       bin_size_base bin_size_inst bin_size_delta time_src time_unit total_time total_time_base overhead_pct \
       func_time func_time_base func_overhead_pct log_path counts_path log_base_path log_base_func_path ipi_log_path; do
     if [[ "${case}" == "case" ]]; then
       continue
     fi
-    printf "|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|\n" \
-      "${case}" "${mode}" "${gs}" "${iterations}" "${rc}" "${rc_base}" "${prepare}" "${prepare_total}" \
+    printf "|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|\n" \
+      "${case}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode}" "${ipi_mode}" "${mode}" "${gs}" "${iterations}" "${rc}" "${rc_base}" "${prepare}" "${prepare_total}" \
       "${check}" "${check_total}" "${interrupt_detect}" \
       "${ipi_count}" "${ipi_handled}" "${ipi_rate}" "${ipi_elapsed}" "${ipi_target}" "${ipi_sender}" \
       "${bin_size_base}" "${bin_size_inst}" "${bin_size_delta}" \
