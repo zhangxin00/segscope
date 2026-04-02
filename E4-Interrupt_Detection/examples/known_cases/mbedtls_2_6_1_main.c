@@ -7,12 +7,12 @@
 static int get_iterations(void) {
   const char *env = getenv("AID_KNOWN_ITERS");
   if (env == NULL || env[0] == '\0') {
-    return 10000;
+    return 100;
   }
   char *end = NULL;
   long value = strtol(env, &end, 10);
   if (end == env || value < 1) {
-    return 10000;
+    return 100;
   }
   if (value > 1000000000L) {
     value = 1000000000L;
