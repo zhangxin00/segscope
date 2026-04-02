@@ -233,5 +233,5 @@ sudo chmod 666 /dev/ipi_ctl
 - 结果默认写入 `E4-Interrupt_Detection/results/`
 - 共享构建产物默认写入 `E4-Interrupt_Detection/build-base/`
 - 默认运行 `100` 次外层重复（每个程序内部默认循环 `100` 次）
-- 会在开头自动检查并尝试安装 LLVM 18 / clang 18 / cmake；待测程序源码首轮自动下载
+- 会在开头自动检查 LLVM 18 / clang 18 / cmake；若缺失，则自动下载官方 LLVM 18.1.8 预编译包到 `E4-Interrupt_Detection/llvm-18/`；待测程序源码首轮自动下载
 - 输出日志与 TSV 会显式包含 `library/version/algorithm/target_branch/instrument_mode/ipi_mode/run_mode` 等字段，便于后续整理实验总表

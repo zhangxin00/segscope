@@ -17,7 +17,7 @@ We evaluate on four real-world applications with known secret-dependent branches
 ## Prerequisites
 
 * Linux x86\_64 (bare-metal recommended)
-* [LLVM 18](https://github.com/llvm/llvm-project/releases/tag/llvmorg-18.1.8) (`clang-18`, `opt-18`, `llvm-dis-18`)
+* [LLVM 18](https://github.com/llvm/llvm-project/releases/tag/llvmorg-18.1.8) (`clang`, `opt`, `llvm-dis` from the official 18.1.8 tarball or system LLVM 18)
 * CMake 3.16+, GCC/G++ (for kernel module and runtime)
 * Linux kernel headers (for IPI kernel module, optional)
 
@@ -96,7 +96,8 @@ For the complete E4 benchmark matrix, run the top-level one-click script from in
 
 This script:
 
-- automatically checks LLVM 18 / Clang 18 / CMake dependencies and, on Debian/Ubuntu, attempts to install missing packages via `sudo apt-get`
+- automatically checks LLVM 18 / Clang 18 / CMake dependencies and, when missing, downloads the official LLVM 18.1.8 prebuilt tarball:
+  - `https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz`
 - automatically triggers first-run downloads of third-party test programs (`mbedtls`, `wolfssl`, `libjpeg`) through `known_cases.sh`
 - automatically checks `/dev/ipi_ctl` and attempts to install/load the IPI kernel module at the start
 - runs the full matrix:
@@ -186,6 +187,7 @@ Pass options via `opt` directly or via `clang -mllvm`:
 ## Notes
 
 * **LLVM 18 required** — the pass uses the new PassManager API (`PassInfoMixin`).
+* **`run_all.sh`** prefers an existing system LLVM 18, otherwise downloads the official LLVM 18.1.8 tarball into `E4-Interrupt_Detection/llvm-18/`.
 * **GS segment mode** (`--use-gs`) is available for bare-metal x86\_64 Linux only; use the default TLS mode in containers/VMs.
 * **`known_cases.sh`** downloads third-party sources (~200 MB) on first run; use `--skip-download` afterwards.
 * **`run_all.sh`** is the recommended one-click entry for E4 experiments and defaults to 100 outer repeats.
