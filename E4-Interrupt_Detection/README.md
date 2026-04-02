@@ -14,6 +14,16 @@ The LLVM module pass (`intmon-branch`) performs static taint analysis to identif
 
 We evaluate on four real-world applications with known secret-dependent branches: MbedTLS 2.6.1, MbedTLS 3.6.1, WolfSSL 5.7.2, and Libjpeg 9f. An IPI (Inter-Processor Interrupt) kernel module provides controlled interrupt injection for reproducible stress testing.
 
+## Quick Start
+
+To run the complete E4 benchmark matrix with one command:
+
+```bash
+./run_all.sh
+```
+
+The script automatically handles LLVM 18 setup, first-run benchmark downloads, IPI module preparation, and writes all results into `E4-Interrupt_Detection/results/`.
+
 ## Prerequisites
 
 * Linux x86\_64 (bare-metal recommended)

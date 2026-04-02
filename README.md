@@ -47,6 +47,21 @@ This repository contains the following materials:
 * `E3-Breaking KASLR`: contains the code that we rely on SegScope-based timer to derandomize KASLR.
 * `E4-Interrupt Detection`: contains an LLVM-based compiler pass that repurposes SegScope's interrupt detection capability as a defence primitive, instrumenting secret-dependent branches with IPI-based monitoring.
 
+## Quick Start for E4
+
+To run the full E4 interrupt-detection experiment matrix with a single command:
+
+```bash
+./E4-Interrupt_Detection/run_all.sh
+```
+
+This one-click script automatically:
+
+- prepares LLVM 18 (reuses system LLVM 18 or downloads the official 18.1.8 prebuilt tarball when missing)
+- downloads benchmark programs on first run (`mbedtls`, `wolfssl`, `libjpeg`)
+- checks and prepares the IPI kernel module when possible
+- runs the complete matrix under `E4-Interrupt_Detection/results/`
+
 For the complete E4 evaluation matrix, run:
 
 ```bash
