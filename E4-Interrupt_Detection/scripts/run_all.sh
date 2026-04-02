@@ -11,6 +11,12 @@ IPI_VARIANTS=(noipi kthread)
 MANIFEST="${RESULT_ROOT}/manifest.tsv"
 FIRST_RUN_DONE=0
 IPI_DEVICE="/dev/ipi_ctl"
+LLVM_VERSION="18.1.8"
+LLVM_TARBALL_NAME="clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
+LLVM_TARBALL_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/${LLVM_TARBALL_NAME}"
+LLVM_LOCAL_ROOT="${ROOT_DIR}/llvm-18"
+LLVM_BIN_DIR="${LLVM_LOCAL_ROOT}/bin"
+LLVM_CMAKE_DIR="${LLVM_LOCAL_ROOT}/lib/cmake/llvm"
 
 usage() {
   cat <<'EOF'
@@ -32,7 +38,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 cat <<'EOF'
-[提示] 本脚本会优先自动检查 LLVM 18 / clang 18 / 构建工具，并在 Debian/Ubuntu 环境下尝试通过 sudo 安装缺失依赖。
+[提示] 本脚本会优先自动检查 LLVM 18 / clang 18 / 构建工具，并在缺失时自动下载官方 LLVM 18 预编译包。
 [提示] 首轮运行会自动下载待测试程序源码（mbedtls / wolfssl / libjpeg），后续组合会复用已下载内容。
 [提示] 本脚本会尝试运行 noipi 与 kthread IPI 两类测试。
 [提示] 若要完成 kthread IPI 测试，请先在目标机器上用 sudo 安装并加载 IPI 内核模块，确保 /dev/ipi_ctl 可用。
@@ -44,57 +50,61 @@ need_cmd() {
 }
 
 ensure_llvm_ready() {
-  local missing=()
-  need_cmd cmake || missing+=(cmake)
-  need_cmd clang-18 || missing+=(clang-18)
-  need_cmd opt-18 || missing+=(opt-18)
-  need_cmd llvm-dis-18 || missing+=(llvm-dis-18)
-
-  if [[ "${#missing[@]}" -eq 0 ]]; then
-    echo "[info] 已检测到 LLVM 18 与构建工具。"
+  if need_cmd cmake && need_cmd clang-18 && need_cmd opt-18 && need_cmd llvm-dis-18; then
+    echo "[info] 已检测到系统 LLVM 18 与构建工具。"
     return 0
   fi
 
-  echo "[warn] 缺少依赖: ${missing[*]}" >&2
+  if [[ -x "${LLVM_BIN_DIR}/clang" && -x "${LLVM_BIN_DIR}/opt" && -x "${LLVM_BIN_DIR}/llvm-dis" && -d "${LLVM_CMAKE_DIR}" ]]; then
+    export PATH="${LLVM_BIN_DIR}:${PATH}"
+    export LLVM_DIR="${LLVM_CMAKE_DIR}"
+    echo "[info] 已检测到本地 LLVM 18 工具链: ${LLVM_LOCAL_ROOT}"
+    return 0
+  fi
 
-  if ! command -v sudo >/dev/null 2>&1; then
-    echo "[err] 未找到 sudo，无法自动安装 LLVM 18 依赖。" >&2
+  echo "[warn] 未检测到可用的 LLVM 18，准备下载官方预编译包。" >&2
+
+  if ! need_cmd cmake; then
+    echo "[err] 未找到 cmake，请先安装 cmake 后再运行。" >&2
     return 1
   fi
 
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "[err] 当前系统不支持 apt-get，无法自动安装 LLVM 18。请手动安装 clang-18 / opt-18 / llvm-dis-18 / llvm-18-dev / cmake。" >&2
+  if ! need_cmd curl; then
+    echo "[err] 未找到 curl，无法下载 LLVM 18 预编译包。" >&2
     return 1
   fi
 
-  if [[ -t 0 ]]; then
-    local answer=""
-    read -r -p "[询问] 缺少 LLVM 18/构建依赖，现在使用 sudo apt-get 自动安装吗？ [Y/n] " answer
-    answer="${answer:-Y}"
-    case "${answer}" in
-      Y|y|yes|YES)
-        ;;
-      *)
-        echo "[err] 用户选择跳过依赖安装，无法继续运行。" >&2
-        return 1
-        ;;
-    esac
-  elif sudo -n true >/dev/null 2>&1; then
-    echo "[info] 检测到免密 sudo，将自动安装 LLVM 18 依赖。"
-  else
-    echo "[err] 当前无交互终端且 sudo 需要密码，无法自动安装 LLVM 18。" >&2
+  mkdir -p "${ROOT_DIR}"
+  local tarball_path="${ROOT_DIR}/${LLVM_TARBALL_NAME}"
+  local extract_parent="${ROOT_DIR}/.llvm-download"
+
+  rm -rf "${extract_parent}" "${LLVM_LOCAL_ROOT}"
+  mkdir -p "${extract_parent}"
+
+  echo "[info] 下载 LLVM ${LLVM_VERSION}: ${LLVM_TARBALL_URL}"
+  curl -L --fail --retry 3 --retry-delay 2 -o "${tarball_path}" "${LLVM_TARBALL_URL}"
+
+  echo "[info] 解压 LLVM 到 ${LLVM_LOCAL_ROOT}"
+  tar -xf "${tarball_path}" -C "${extract_parent}"
+
+  local extracted_dir
+  extracted_dir="$(find "${extract_parent}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  if [[ -z "${extracted_dir}" ]]; then
+    echo "[err] LLVM 18 预编译包解压失败。" >&2
     return 1
   fi
 
-  echo "[info] 正在安装 LLVM 18 / clang 18 / 构建工具..."
-  sudo apt-get update
-  sudo apt-get install -y build-essential cmake clang-18 llvm-18 llvm-18-dev llvm-18-tools
+  mv "${extracted_dir}" "${LLVM_LOCAL_ROOT}"
+  rm -rf "${extract_parent}" "${tarball_path}"
 
-  need_cmd cmake || return 1
-  need_cmd clang-18 || return 1
-  need_cmd opt-18 || return 1
-  need_cmd llvm-dis-18 || return 1
-  echo "[info] LLVM 18 依赖安装完成。"
+  if [[ ! -x "${LLVM_BIN_DIR}/clang" || ! -x "${LLVM_BIN_DIR}/opt" || ! -x "${LLVM_BIN_DIR}/llvm-dis" || ! -d "${LLVM_CMAKE_DIR}" ]]; then
+    echo "[err] 下载后的 LLVM 18 不完整：${LLVM_LOCAL_ROOT}" >&2
+    return 1
+  fi
+
+  export PATH="${LLVM_BIN_DIR}:${PATH}"
+  export LLVM_DIR="${LLVM_CMAKE_DIR}"
+  echo "[info] LLVM 18 已就绪：${LLVM_LOCAL_ROOT}"
 }
 
 ensure_ipi_ready() {
