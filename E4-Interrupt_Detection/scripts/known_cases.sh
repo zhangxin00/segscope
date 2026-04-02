@@ -6,6 +6,7 @@ THIRD_DIR="${ROOT_DIR}/third_party"
 BUILD_DIR_DEFAULT="${ROOT_DIR}/build-linux"
 BUILD_DIR="${AID_BUILD_DIR:-${BUILD_DIR_DEFAULT}}"
 PLUGIN="${BUILD_DIR}/AutoInstrumentPass.so"
+DISTFILES_DIR="${AID_DISTFILES_DIR:-${ROOT_DIR}/distfiles}"
 LLVM_DIR_DEFAULT="/usr/lib/llvm-18/lib/cmake/llvm"
 # 自动检测 LLVM 18：优先环境变量 > 系统安装 > 项目内 llvm-18 目录
 if [[ -n "${LLVM_DIR:-}" && -d "${LLVM_DIR:-}" ]]; then
@@ -624,19 +625,45 @@ fi
 
 mkdir -p "${THIRD_DIR}" "${BUILD_DIR}"
 
+extract_tarball_if_needed() {
+  local src_path="$1"
+  local dest_dir="$2"
+  local strip_components="${3:-1}"
+  if [[ -d "${dest_dir}" ]]; then
+    return 0
+  fi
+  if [[ ! -f "${src_path}" ]]; then
+    return 1
+  fi
+  mkdir -p "${dest_dir}"
+  if ! tar -xf "${src_path}" -C "${dest_dir}" --strip-components="${strip_components}"; then
+    rm -rf "${dest_dir}"
+    return 1
+  fi
+  return 0
+}
+
 if [[ "${SKIP_DOWNLOAD}" -eq 0 ]]; then
   if [[ ! -d "${THIRD_DIR}/mbedtls-2.6.1" ]]; then
-    git clone --depth 1 --branch mbedtls-2.6.1 https://github.com/Mbed-TLS/mbedtls.git "${THIRD_DIR}/mbedtls-2.6.1"
+    if ! extract_tarball_if_needed "${DISTFILES_DIR}/mbedtls-2.6.1.tar.gz" "${THIRD_DIR}/mbedtls-2.6.1" 1; then
+      git clone --depth 1 --branch mbedtls-2.6.1 https://github.com/Mbed-TLS/mbedtls.git "${THIRD_DIR}/mbedtls-2.6.1"
+    fi
   fi
   if [[ ! -d "${THIRD_DIR}/mbedtls-3.6.1" ]]; then
-    git clone --depth 1 --branch mbedtls-3.6.1 https://github.com/Mbed-TLS/mbedtls.git "${THIRD_DIR}/mbedtls-3.6.1"
+    if ! extract_tarball_if_needed "${DISTFILES_DIR}/mbedtls-3.6.1.tar.gz" "${THIRD_DIR}/mbedtls-3.6.1" 1; then
+      git clone --depth 1 --branch mbedtls-3.6.1 https://github.com/Mbed-TLS/mbedtls.git "${THIRD_DIR}/mbedtls-3.6.1"
+    fi
   fi
   if [[ ! -d "${THIRD_DIR}/wolfssl-5.7.2" ]]; then
-    git clone --depth 1 --branch v5.7.2-stable https://github.com/wolfSSL/wolfssl.git "${THIRD_DIR}/wolfssl-5.7.2"
+    if ! extract_tarball_if_needed "${DISTFILES_DIR}/wolfssl-5.7.2.tar.gz" "${THIRD_DIR}/wolfssl-5.7.2" 1; then
+      git clone --depth 1 --branch v5.7.2-stable https://github.com/wolfSSL/wolfssl.git "${THIRD_DIR}/wolfssl-5.7.2"
+    fi
   fi
   if [[ ! -d "${THIRD_DIR}/jpeg-9f" ]]; then
-    curl -L -o "${THIRD_DIR}/jpegsrc.v9f.tar.gz" https://www.ijg.org/files/jpegsrc.v9f.tar.gz
-    tar -xf "${THIRD_DIR}/jpegsrc.v9f.tar.gz" -C "${THIRD_DIR}"
+    if ! extract_tarball_if_needed "${DISTFILES_DIR}/jpegsrc.v9f.tar.gz" "${THIRD_DIR}/jpeg-9f" 1; then
+      curl -L -o "${THIRD_DIR}/jpegsrc.v9f.tar.gz" https://www.ijg.org/files/jpegsrc.v9f.tar.gz
+      tar -xf "${THIRD_DIR}/jpegsrc.v9f.tar.gz" -C "${THIRD_DIR}"
+    fi
   fi
 fi
 
@@ -700,6 +727,11 @@ run_case() {
   local instrument_mode_value="${SECRET_INSTR}"
   local ipi_mode_value="none"
   local target_branch
+  local extra_link_flags=()
+  local execution_only=0
+  local ir_path="-"
+  local execution_only=0
+  local ir_path="-"
   if [[ "${USE_GS}" -eq 1 ]]; then
     gs_mode="gs"
   fi
@@ -711,14 +743,23 @@ run_case() {
   fi
   target_branch="$(printf "%b" "${lines}" | tr '\n' ',')"
   target_branch="${target_branch%,}"
+  if [[ "${library}" == "wolfssl" && "${algorithm}" == "DH" ]]; then
+    extra_link_flags+=(-lm)
+  fi
 
   mkdir -p "${outdir}"
   rm -f "${outdir}"/*.o
   printf "\\n=== %s ===\\n" "${name}"
 
-  # build bitcode
-  ${CLANG_BIN} -O0 -g ${cflags} ${includes} -emit-llvm -c "${src}" -o "${outdir}/input.bc"
-  printf "%b\\n" "${lines}" > "${outdir}/secret_lines.txt"
+  if [[ "${SKIP_BUILD}" -eq 1 && -f "${outdir}/case.out" && -f "${outdir}/case_base.out" ]]; then
+    execution_only=1
+  fi
+
+  if [[ "${execution_only}" -eq 0 ]]; then
+    # build bitcode
+    ${CLANG_BIN} -O0 -g ${cflags} ${includes} -emit-llvm -c "${src}" -o "${outdir}/input.bc"
+    printf "%b\\n" "${lines}" > "${outdir}/secret_lines.txt"
+  fi
 
   local instr_every_flag=()
   local inline_gs_flag=()
@@ -738,6 +779,7 @@ run_case() {
   if [[ -n "${SYSCALL_FUNC_PREFIXES}" ]]; then
     syscall_flags+=("-syscall-func-prefixes=${SYSCALL_FUNC_PREFIXES}")
   fi
+  if [[ "${execution_only}" -eq 0 ]]; then
   local opt_rc=0
   (ulimit -v "${OPT_MEM_LIMIT_KB}" 2>/dev/null || true
    ${OPT_BIN} -load-pass-plugin "${PLUGIN}" -passes=intmon-branch \
@@ -757,6 +799,10 @@ run_case() {
   fi
 
   ${LLVMDIS_BIN} "${outdir}/instrumented.bc" -o "${outdir}/instrumented.ll"
+  fi
+  if [[ -f "${outdir}/instrumented.ll" ]]; then
+    ir_path="${outdir}/instrumented.ll"
+  fi
   local bin_size_base="-"
   local bin_size_inst="-"
   local bin_size_delta="-"
@@ -776,54 +822,58 @@ run_case() {
   if [[ -z "${main_src}" ]]; then
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
       "${name}" "${library}" "${version}" "${algorithm}" "${target_branch}" "${instrument_mode_value}" "${ipi_mode_value}" "-" "${gs_mode}" "${ITERATIONS}" "see-log" "${f1c}" "${f1cnt}" "${f2c}" "${f2cnt}" \
-      "${outdir}/instrumented.ll" "${bin_size_base}" "${bin_size_inst}" "${bin_size_delta}" \
+      "${ir_path}" "${bin_size_base}" "${bin_size_inst}" "${bin_size_delta}" \
       "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" "-" >> "${RAW_TSV}"
   fi
 
-  grep -n "__intmon_prepare" "${outdir}/instrumented.ll" | head -n 5 || true
-  grep -n "__intmon_check" "${outdir}/instrumented.ll" | head -n 5 || true
+  if [[ -f "${outdir}/instrumented.ll" ]]; then
+    grep -n "__intmon_prepare" "${outdir}/instrumented.ll" | head -n 5 || true
+    grep -n "__intmon_check" "${outdir}/instrumented.ll" | head -n 5 || true
+  fi
 
   if [[ -n "${main_src}" ]]; then
-    local extra_objs=()
-    if [[ -n "${extra_srcs}" ]]; then
-      IFS=' ' read -r -a extra_list <<< "${extra_srcs}"
-      for extra_src in "${extra_list[@]}"; do
-        local obj_name
-        obj_name="${outdir}/$(basename "${extra_src}").o"
-        ${CLANG_BIN} -O0 -g ${sec_flags} ${cflags} ${includes} -c "${extra_src}" -o "${obj_name}"
-        extra_objs+=("${obj_name}")
-      done
-    fi
-    ${CLANG_BIN} -O0 -g ${sec_flags} ${cflags} ${includes} -c "${main_src}" -o "${outdir}/case_main.o"
-    local runtime_flags=()
-    if [[ "${USE_GS}" -eq 1 ]]; then
-      runtime_flags+=(-DINTMON_USE_GS)
-    fi
-    if [[ "${TIME_SOURCE}" == "tsc" ]]; then
-      runtime_flags+=(-DINTMON_TIME_TSC)
-    fi
-    ${CLANG_BIN} -O0 -g ${sec_flags} "${runtime_flags[@]}" \
-      -c "${ROOT_DIR}/runtime/intmon_runtime.c" -o "${outdir}/intmon_runtime.o"
-    ${CLANG_BIN} -O0 -g "${outdir}/instrumented.bc" \
-      "${outdir}/case_main.o" "${outdir}/intmon_runtime.o" "${extra_objs[@]}" \
-      -Wl,--gc-sections -o "${outdir}/case.out"
-    ${CLANG_BIN} -O0 -g "${outdir}/input.bc" \
-      "${outdir}/case_main.o" "${outdir}/intmon_runtime.o" "${extra_objs[@]}" \
-      -Wl,--gc-sections -o "${outdir}/case_base.out"
-    local opt2_rc=0
-    (ulimit -v "${OPT_MEM_LIMIT_KB}" 2>/dev/null || true
-     ${OPT_BIN} -load-pass-plugin "${PLUGIN}" -passes=intmon-branch \
-      -instrument-mode=none -func-instrument=instrumented \
-      -secret-lines="${outdir}/secret_lines.txt" \
-      -secret-instrument="${SECRET_INSTR}" \
-      "${inline_gs_flag[@]}" \
-      "${outdir}/input.bc" -o "${outdir}/func_only.bc") || opt2_rc=$?
-    if [[ "${opt2_rc}" -eq 0 ]]; then
-      ${CLANG_BIN} -O0 -g "${outdir}/func_only.bc" \
+    if [[ "${execution_only}" -eq 0 ]]; then
+      local extra_objs=()
+      if [[ -n "${extra_srcs}" ]]; then
+        IFS=' ' read -r -a extra_list <<< "${extra_srcs}"
+        for extra_src in "${extra_list[@]}"; do
+          local obj_name
+          obj_name="${outdir}/$(basename "${extra_src}").o"
+          ${CLANG_BIN} -O0 -g ${sec_flags} ${cflags} ${includes} -c "${extra_src}" -o "${obj_name}"
+          extra_objs+=("${obj_name}")
+        done
+      fi
+      ${CLANG_BIN} -O0 -g ${sec_flags} ${cflags} ${includes} -c "${main_src}" -o "${outdir}/case_main.o"
+      local runtime_flags=()
+      if [[ "${USE_GS}" -eq 1 ]]; then
+        runtime_flags+=(-DINTMON_USE_GS)
+      fi
+      if [[ "${TIME_SOURCE}" == "tsc" ]]; then
+        runtime_flags+=(-DINTMON_TIME_TSC)
+      fi
+      ${CLANG_BIN} -O0 -g ${sec_flags} "${runtime_flags[@]}" \
+        -c "${ROOT_DIR}/runtime/intmon_runtime.c" -o "${outdir}/intmon_runtime.o"
+      ${CLANG_BIN} -O0 -g "${outdir}/instrumented.bc" \
         "${outdir}/case_main.o" "${outdir}/intmon_runtime.o" "${extra_objs[@]}" \
-        -Wl,--gc-sections -o "${outdir}/case_func.out"
-    else
-      echo "[warn] func-only opt 失败（rc=${opt2_rc}），跳过 func 基线" >&2
+        "${extra_link_flags[@]}" -Wl,--gc-sections -o "${outdir}/case.out"
+      ${CLANG_BIN} -O0 -g "${outdir}/input.bc" \
+        "${outdir}/case_main.o" "${outdir}/intmon_runtime.o" "${extra_objs[@]}" \
+        "${extra_link_flags[@]}" -Wl,--gc-sections -o "${outdir}/case_base.out"
+      local opt2_rc=0
+      (ulimit -v "${OPT_MEM_LIMIT_KB}" 2>/dev/null || true
+       ${OPT_BIN} -load-pass-plugin "${PLUGIN}" -passes=intmon-branch \
+        -instrument-mode=none -func-instrument=instrumented \
+        -secret-lines="${outdir}/secret_lines.txt" \
+        -secret-instrument="${SECRET_INSTR}" \
+        "${inline_gs_flag[@]}" \
+        "${outdir}/input.bc" -o "${outdir}/func_only.bc") || opt2_rc=$?
+      if [[ "${opt2_rc}" -eq 0 ]]; then
+        ${CLANG_BIN} -O0 -g "${outdir}/func_only.bc" \
+          "${outdir}/case_main.o" "${outdir}/intmon_runtime.o" "${extra_objs[@]}" \
+          "${extra_link_flags[@]}" -Wl,--gc-sections -o "${outdir}/case_func.out"
+      else
+        echo "[warn] func-only opt 失败（rc=${opt2_rc}），跳过 func 基线" >&2
+      fi
     fi
 
     bin_size_base="$(file_size "${outdir}/case_base.out")"
@@ -987,6 +1037,28 @@ run_case "MbedTLS 2.6.1 bignum.c" \
   "${THIRD_DIR}/mbedtls-2.6.1/library/rsa.c" \
   "${RUN_MODES}"
 
+run_case "MbedTLS 2.6.1 bignum.c (DHM)" \
+  "mbedtls" "2.6.1" "DH" \
+  "${THIRD_DIR}/mbedtls-2.6.1/library/bignum.c" \
+  "${BUILD_DIR}/mbedtls-2.6.1-dhm" \
+  "-I${THIRD_DIR}/mbedtls-2.6.1/include -I${THIRD_DIR}/mbedtls-2.6.1/library" \
+  "" \
+  "bignum.c:1013\nbignum.c:1044\nbignum.c:1581" \
+  "${ROOT_DIR}/examples/known_cases/mbedtls_2_6_1_dhm_main.c" \
+  "${THIRD_DIR}/mbedtls-2.6.1/library/dhm.c ${THIRD_DIR}/mbedtls-2.6.1/library/asn1parse.c ${THIRD_DIR}/mbedtls-2.6.1/library/pem.c" \
+  "${RUN_MODES}"
+
+run_case "MbedTLS 2.6.1 bignum.c (ECDSA)" \
+  "mbedtls" "2.6.1" "ECDSA" \
+  "${THIRD_DIR}/mbedtls-2.6.1/library/bignum.c" \
+  "${BUILD_DIR}/mbedtls-2.6.1-ecdsa" \
+  "-I${THIRD_DIR}/mbedtls-2.6.1/include -I${THIRD_DIR}/mbedtls-2.6.1/library" \
+  "" \
+  "bignum.c:1013\nbignum.c:1044\nbignum.c:1581" \
+  "${ROOT_DIR}/examples/known_cases/mbedtls_2_6_1_ecdsa_main.c" \
+  "${THIRD_DIR}/mbedtls-2.6.1/library/ecdsa.c ${THIRD_DIR}/mbedtls-2.6.1/library/ecp.c ${THIRD_DIR}/mbedtls-2.6.1/library/ecp_curves.c ${THIRD_DIR}/mbedtls-2.6.1/library/asn1parse.c ${THIRD_DIR}/mbedtls-2.6.1/library/asn1write.c" \
+  "${RUN_MODES}"
+
 run_case "MbedTLS 3.6.1 bignum.c" \
   "mbedtls" "3.6.1" "RSA" \
   "${THIRD_DIR}/mbedtls-3.6.1/library/bignum.c" \
@@ -1029,6 +1101,28 @@ run_case "WolfSSL 5.7.2 integer.c" \
   "integer.c:1329" \
   "${ROOT_DIR}/examples/known_cases/wolfssl_5_7_2_main.c" \
   "${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/memory.c ${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/rsa.c ${ROOT_DIR}/examples/known_cases/wolfssl_rng_stub.c" \
+  "${RUN_MODES}"
+
+run_case "WolfSSL 5.7.2 integer.c (DH)" \
+  "wolfssl" "5.7.2" "DH" \
+  "${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/integer.c" \
+  "${BUILD_DIR}/wolfssl-5.7.2-dh" \
+  "-I${THIRD_DIR}/wolfssl-5.7.2 -I${THIRD_DIR}/wolfssl-5.7.2/wolfssl" \
+  "-DUSE_INTEGER_HEAP_MATH" \
+  "integer.c:1329" \
+  "${ROOT_DIR}/examples/known_cases/wolfssl_5_7_2_dh_main.c" \
+  "${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/memory.c ${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/dh.c ${ROOT_DIR}/examples/known_cases/wolfssl_rng_stub.c" \
+  "${RUN_MODES}"
+
+run_case "WolfSSL 5.7.2 integer.c (ECDSA)" \
+  "wolfssl" "5.7.2" "ECDSA" \
+  "${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/integer.c" \
+  "${BUILD_DIR}/wolfssl-5.7.2-ecdsa" \
+  "-I${THIRD_DIR}/wolfssl-5.7.2 -I${THIRD_DIR}/wolfssl-5.7.2/wolfssl" \
+  "-DUSE_INTEGER_HEAP_MATH -DHAVE_ECC -DHAVE_ECC_SIGN -DHAVE_ECC_VERIFY -DHAVE_ECC_KEY_IMPORT" \
+  "integer.c:1329" \
+  "${ROOT_DIR}/examples/known_cases/wolfssl_5_7_2_ecdsa_main.c" \
+  "${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/memory.c ${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/wolfmath.c ${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/asn.c ${THIRD_DIR}/wolfssl-5.7.2/wolfcrypt/src/ecc.c ${ROOT_DIR}/examples/known_cases/wolfssl_rng_stub.c" \
   "${RUN_MODES}"
 
 # libjpeg needs jconfig.h
