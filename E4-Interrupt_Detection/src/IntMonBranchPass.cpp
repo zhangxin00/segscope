@@ -146,11 +146,11 @@ struct TaintState {
   DenseSet<const Value *> MemObjects;
 
   bool isValueTainted(const Value *V) const {
-    return Values.contains(V);
+    return Values.count(V) != 0;
   }
 
   bool isMemTainted(const Value *V) const {
-    return MemObjects.contains(V);
+    return MemObjects.count(V) != 0;
   }
 };
 
@@ -392,14 +392,14 @@ bool isSecretArg(const Argument &Arg,
   if (It == SecretArgMap.end()) {
     return false;
   }
-  return It->second.contains(Arg.getArgNo());
+    return It->second.count(Arg.getArgNo()) != 0;
 }
 
 bool isSecretGlobal(const GlobalVariable &GV, const StringSet<> &SecretGlobals) {
   if (GV.getMetadata("secret")) {
     return true;
   }
-  if (SecretGlobals.contains(GV.getName())) {
+    if (SecretGlobals.count(GV.getName()) != 0) {
     return true;
   }
   if (nameContainsSecret(GV.getName())) {
@@ -1063,7 +1063,7 @@ bool bfsFindPath(BasicBlock *Start, BasicBlock *Target,
       if (!Succ || isEhBlock(*Succ)) {
         continue;
       }
-      if (Visited.contains(Succ)) {
+      if (Visited.count(Succ) != 0) {
         continue;
       }
       Visited.insert(Succ);
@@ -1221,20 +1221,20 @@ TaintState computeTaint(Function &F, const DataLayout &DL,
     for (BasicBlock &BB : F) {
       for (Instruction &I : BB) {
         if (I.getMetadata("secret")) {
-          if (!I.getType()->isVoidTy() && !State.Values.contains(&I)) {
+          if (!I.getType()->isVoidTy() && State.Values.count(&I) == 0) {
             State.Values.insert(&I);
             Changed = true;
           }
         }
 
         if (auto *LI = dyn_cast<LoadInst>(&I)) {
-          bool Tainted = State.Values.contains(LI->getPointerOperand());
+          bool Tainted = State.Values.count(LI->getPointerOperand()) != 0;
           const Value *Obj =
               getMemObject(LI->getPointerOperand(), DL);
-          if (Obj && State.MemObjects.contains(Obj)) {
+          if (Obj && State.MemObjects.count(Obj) != 0) {
             Tainted = true;
           }
-          if (Tainted && !State.Values.contains(LI)) {
+          if (Tainted && State.Values.count(LI) == 0) {
             State.Values.insert(LI);
             Changed = true;
           }
@@ -1242,8 +1242,8 @@ TaintState computeTaint(Function &F, const DataLayout &DL,
         }
 
         if (auto *SI = dyn_cast<StoreInst>(&I)) {
-          bool Tainted = State.Values.contains(SI->getValueOperand()) ||
-                         State.Values.contains(SI->getPointerOperand());
+          bool Tainted = State.Values.count(SI->getValueOperand()) != 0 ||
+                         State.Values.count(SI->getPointerOperand()) != 0;
           if (Tainted) {
             const Value *Obj =
                 getMemObject(SI->getPointerOperand(), DL);
@@ -1255,8 +1255,8 @@ TaintState computeTaint(Function &F, const DataLayout &DL,
         }
 
         if (auto *ARMW = dyn_cast<AtomicRMWInst>(&I)) {
-          bool Tainted = State.Values.contains(ARMW->getValOperand()) ||
-                         State.Values.contains(ARMW->getPointerOperand());
+          bool Tainted = State.Values.count(ARMW->getValOperand()) != 0 ||
+                         State.Values.count(ARMW->getPointerOperand()) != 0;
           if (Tainted) {
             const Value *Obj =
                 getMemObject(ARMW->getPointerOperand(), DL);
@@ -1264,7 +1264,7 @@ TaintState computeTaint(Function &F, const DataLayout &DL,
               Changed = true;
             }
           }
-          if (!State.Values.contains(ARMW) && Tainted) {
+          if (State.Values.count(ARMW) == 0 && Tainted) {
             State.Values.insert(ARMW);
             Changed = true;
           }
@@ -1272,9 +1272,9 @@ TaintState computeTaint(Function &F, const DataLayout &DL,
         }
 
         if (auto *ACX = dyn_cast<AtomicCmpXchgInst>(&I)) {
-          bool Tainted = State.Values.contains(ACX->getCompareOperand()) ||
-                         State.Values.contains(ACX->getNewValOperand()) ||
-                         State.Values.contains(ACX->getPointerOperand());
+          bool Tainted = State.Values.count(ACX->getCompareOperand()) != 0 ||
+                         State.Values.count(ACX->getNewValOperand()) != 0 ||
+                         State.Values.count(ACX->getPointerOperand()) != 0;
           if (Tainted) {
             const Value *Obj =
                 getMemObject(ACX->getPointerOperand(), DL);
@@ -1282,7 +1282,7 @@ TaintState computeTaint(Function &F, const DataLayout &DL,
               Changed = true;
             }
           }
-          if (!State.Values.contains(ACX) && Tainted) {
+          if (State.Values.count(ACX) == 0 && Tainted) {
             State.Values.insert(ACX);
             Changed = true;
           }
@@ -1293,14 +1293,14 @@ TaintState computeTaint(Function &F, const DataLayout &DL,
           bool AnyArgTainted = false;
           for (unsigned i = 0; i < CB->arg_size(); ++i) {
             Value *Arg = CB->getArgOperand(i);
-            if (State.Values.contains(Arg)) {
+            if (State.Values.count(Arg) != 0) {
               AnyArgTainted = true;
               break;
             }
           }
 
           if (AnyArgTainted && !CB->getType()->isVoidTy() &&
-              !State.Values.contains(CB)) {
+              State.Values.count(CB) == 0) {
             State.Values.insert(CB);
             Changed = true;
           }
@@ -1323,12 +1323,12 @@ TaintState computeTaint(Function &F, const DataLayout &DL,
         if (!I.getType()->isVoidTy()) {
           bool AnyOperandTainted = false;
           for (Value *Op : I.operands()) {
-            if (State.Values.contains(Op)) {
+            if (State.Values.count(Op) != 0) {
               AnyOperandTainted = true;
               break;
             }
           }
-          if (AnyOperandTainted && !State.Values.contains(&I)) {
+          if (AnyOperandTainted && State.Values.count(&I) == 0) {
             State.Values.insert(&I);
             Changed = true;
           }
@@ -1607,7 +1607,7 @@ PreservedAnalyses IntMonBranchPass::run(Module &M, ModuleAnalysisManager &MAM) {
         ShouldInstrument = Info.IsSecret;
         break;
       case InstrumentMode::List:
-        ShouldInstrument = ListIds.contains(Info.Id);
+        ShouldInstrument = ListIds.count(Info.Id) != 0;
         break;
     }
 
@@ -1756,8 +1756,8 @@ PreservedAnalyses IntMonBranchPass::run(Module &M, ModuleAnalysisManager &MAM) {
                    << " func=" << F.getName() << "\n";
           } else {
             for (BasicBlock &BB : F) {
-              bool InT = TrueSet.contains(&BB);
-              bool InF = FalseSet.contains(&BB);
+              bool InT = TrueSet.count(&BB) != 0;
+              bool InF = FalseSet.count(&BB) != 0;
               if (!InT && !InF) {
                 continue;
               }
@@ -1829,8 +1829,8 @@ PreservedAnalyses IntMonBranchPass::run(Module &M, ModuleAnalysisManager &MAM) {
                    << " func=" << F.getName() << "\n";
           } else {
             for (BasicBlock &BB : F) {
-              bool InT = TrueSet.contains(&BB);
-              bool InF = FalseSet.contains(&BB);
+              bool InT = TrueSet.count(&BB) != 0;
+              bool InF = FalseSet.count(&BB) != 0;
               if (!InT && !InF) {
                 continue;
               }
@@ -1943,7 +1943,7 @@ PreservedAnalyses IntMonBranchPass::run(Module &M, ModuleAnalysisManager &MAM) {
             if (B == TrueBB || B == FalseBB || B == JoinBB) {
               continue;
             }
-            if (!SetF.contains(B) && !hasExistingDivAtEntry(*B, Id, 2)) {
+            if (SetF.count(B) == 0 && !hasExistingDivAtEntry(*B, Id, 2)) {
               if (Instruction *IP = B->getFirstNonPHIOrDbgOrLifetime()) {
                 IRBuilder<> IB(IP);
                 Value *Kind = ConstantInt::get(Type::getInt32Ty(Ctx), 2);
@@ -1958,7 +1958,7 @@ PreservedAnalyses IntMonBranchPass::run(Module &M, ModuleAnalysisManager &MAM) {
             if (B == TrueBB || B == FalseBB || B == JoinBB) {
               continue;
             }
-            if (!SetT.contains(B) && !hasExistingDivAtEntry(*B, Id, 2)) {
+            if (SetT.count(B) == 0 && !hasExistingDivAtEntry(*B, Id, 2)) {
               if (Instruction *IP = B->getFirstNonPHIOrDbgOrLifetime()) {
                 IRBuilder<> IB(IP);
                 Value *Kind = ConstantInt::get(Type::getInt32Ty(Ctx), 2);
@@ -1981,7 +1981,7 @@ PreservedAnalyses IntMonBranchPass::run(Module &M, ModuleAnalysisManager &MAM) {
         continue;
       }
       if (FuncInstr == FuncInstrumentMode::Instrumented &&
-          !InstrumentedFuncs.contains(&F)) {
+          InstrumentedFuncs.count(&F) == 0) {
         continue;
       }
       uint64_t FuncId = makeFunctionId(F);
