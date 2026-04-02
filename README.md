@@ -52,7 +52,7 @@ This repository contains the following materials:
 To run the full E4 interrupt-detection experiment matrix with a single command:
 
 ```bash
-./E4-Interrupt_Detection/run_all.sh
+sudo ./E4-Interrupt_Detection/run_all.sh
 ```
 
 This one-click script automatically:

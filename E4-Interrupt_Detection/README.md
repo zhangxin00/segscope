@@ -19,10 +19,26 @@ We evaluate on four real-world applications with known secret-dependent branches
 To run the complete E4 benchmark matrix with one command:
 
 ```bash
-./run_all.sh
+sudo ./run_all.sh
 ```
 
 The script automatically handles LLVM 18 setup, first-run benchmark downloads, IPI module preparation, and writes all results into `E4-Interrupt_Detection/results/`.
+
+In the current benchmark matrix, all `api` modes are designed as minimal complete algorithm flows:
+
+- RSA: public operation + private operation round-trip
+- DH: key generation/public exchange/shared-secret derivation
+- ECDSA: sign + verify
+
+For offline/internal-network environments, `run_all.sh` and `known_cases.sh` will prefer local tarballs when present:
+
+- `E4-Interrupt_Detection/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz`
+- `E4-Interrupt_Detection/distfiles/mbedtls-2.6.1.tar.gz`
+- `E4-Interrupt_Detection/distfiles/mbedtls-3.6.1.tar.gz`
+- `E4-Interrupt_Detection/distfiles/wolfssl-5.7.2.tar.gz`
+- `E4-Interrupt_Detection/distfiles/jpegsrc.v9f.tar.gz`
+
+If the script installs the kthread IPI module itself, it will automatically uninstall that module after the matrix finishes.
 
 ## Prerequisites
 
@@ -101,7 +117,7 @@ The script instruments each library with preset secret-line annotations, runs 10
 For the complete E4 benchmark matrix, run the top-level one-click script from inside `E4-Interrupt_Detection`:
 
 ```
-./run_all.sh
+sudo ./run_all.sh
 ```
 
 This script:
@@ -110,6 +126,7 @@ This script:
   - `https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz`
 - automatically triggers first-run downloads of third-party test programs (`mbedtls`, `wolfssl`, `libjpeg`) through `known_cases.sh`
 - automatically checks `/dev/ipi_ctl` and attempts to install/load the IPI kernel module at the start
+- automatically uninstalls the kthread IPI module at the end if the script installed it
 - runs the full matrix:
   - instrumentation modes: `branch / once / block / full`
   - IPI modes: `noipi / kthread`

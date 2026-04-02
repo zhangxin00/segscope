@@ -223,7 +223,7 @@ sudo chmod 666 /dev/ipi_ctl
 若按 E4 目录组织实验，可直接执行：
 
 ```
-./E4-Interrupt_Detection/run_all.sh
+sudo ./E4-Interrupt_Detection/run_all.sh
 ```
 
 说明：
