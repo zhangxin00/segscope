@@ -11,12 +11,14 @@ IPI_VARIANTS=(noipi kthread)
 MANIFEST="${RESULT_ROOT}/manifest.tsv"
 FIRST_RUN_DONE=0
 IPI_DEVICE="/dev/ipi_ctl"
+IPI_MODULE_INSTALLED_BY_SCRIPT=0
 LLVM_VERSION="18.1.8"
 LLVM_TARBALL_NAME="clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
 LLVM_TARBALL_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/${LLVM_TARBALL_NAME}"
 LLVM_LOCAL_ROOT="${ROOT_DIR}/llvm-18"
 LLVM_BIN_DIR="${LLVM_LOCAL_ROOT}/bin"
 LLVM_CMAKE_DIR="${LLVM_LOCAL_ROOT}/lib/cmake/llvm"
+PREBUILT_ROOT="${AID_PREBUILT_ROOT:-${ROOT_DIR}/prebuilt}"
 
 usage() {
   cat <<'EOF'
@@ -50,6 +52,11 @@ need_cmd() {
 }
 
 ensure_llvm_ready() {
+  if [[ -d "${PREBUILT_ROOT}/branch" && -d "${PREBUILT_ROOT}/once" && -d "${PREBUILT_ROOT}/block" && -d "${PREBUILT_ROOT}/full" ]]; then
+    echo "[info] 检测到预构建 mode 目录，将跳过 LLVM 准备。"
+    return 0
+  fi
+
   if need_cmd cmake && need_cmd clang-18 && need_cmd opt-18 && need_cmd llvm-dis-18; then
     echo "[info] 已检测到系统 LLVM 18 与构建工具。"
     return 0
@@ -75,14 +82,22 @@ ensure_llvm_ready() {
   fi
 
   mkdir -p "${ROOT_DIR}"
-  local tarball_path="${ROOT_DIR}/${LLVM_TARBALL_NAME}"
+  local bundled_tarball_path="${ROOT_DIR}/${LLVM_TARBALL_NAME}"
+  local tarball_path="${bundled_tarball_path}"
   local extract_parent="${ROOT_DIR}/.llvm-download"
+  local downloaded_tarball=0
 
   rm -rf "${extract_parent}" "${LLVM_LOCAL_ROOT}"
   mkdir -p "${extract_parent}"
 
-  echo "[info] 下载 LLVM ${LLVM_VERSION}: ${LLVM_TARBALL_URL}"
-  curl -L --fail --retry 3 --retry-delay 2 -o "${tarball_path}" "${LLVM_TARBALL_URL}"
+  if [[ ! -f "${bundled_tarball_path}" ]]; then
+    tarball_path="${extract_parent}/${LLVM_TARBALL_NAME}"
+    downloaded_tarball=1
+    echo "[info] 下载 LLVM ${LLVM_VERSION}: ${LLVM_TARBALL_URL}"
+    curl -L --fail --retry 3 --retry-delay 2 -o "${tarball_path}" "${LLVM_TARBALL_URL}"
+  else
+    echo "[info] 使用本地 LLVM tar 包: ${bundled_tarball_path}"
+  fi
 
   echo "[info] 解压 LLVM 到 ${LLVM_LOCAL_ROOT}"
   tar -xf "${tarball_path}" -C "${extract_parent}"
@@ -95,7 +110,10 @@ ensure_llvm_ready() {
   fi
 
   mv "${extracted_dir}" "${LLVM_LOCAL_ROOT}"
-  rm -rf "${extract_parent}" "${tarball_path}"
+  if [[ "${downloaded_tarball}" -eq 1 ]]; then
+    rm -f "${tarball_path}"
+  fi
+  rm -rf "${extract_parent}"
 
   if [[ ! -x "${LLVM_BIN_DIR}/clang" || ! -x "${LLVM_BIN_DIR}/opt" || ! -x "${LLVM_BIN_DIR}/llvm-dis" || ! -d "${LLVM_CMAKE_DIR}" ]]; then
     echo "[err] 下载后的 LLVM 18 不完整：${LLVM_LOCAL_ROOT}" >&2
@@ -113,43 +131,58 @@ ensure_ipi_ready() {
     return 0
   fi
 
+  if [[ "$(id -u)" -eq 0 ]]; then
+    echo "[info] 当前已以 root 身份运行，直接安装 IPI 模块..."
+    "${ROOT_DIR}/scripts/ipi_module.sh" install
+    if [[ -e "${IPI_DEVICE}" ]]; then
+      IPI_MODULE_INSTALLED_BY_SCRIPT=1
+      echo "[info] IPI 模块安装完成: ${IPI_DEVICE}"
+      return 0
+    fi
+    echo "[warn] root 安装流程执行后仍未检测到 ${IPI_DEVICE}，将仅运行 noipi。" >&2
+    return 1
+  fi
+
   if ! command -v sudo >/dev/null 2>&1; then
     echo "[warn] 未找到 sudo，无法自动安装 IPI 模块，将仅运行 noipi。" >&2
     return 1
   fi
 
-  if [[ ! -t 0 ]]; then
-    echo "[warn] 当前无交互终端，无法在脚本开头询问 sudo 密码，且未检测到 ${IPI_DEVICE}。" >&2
-    echo "[warn] 将仅运行 noipi。若需 kthread，请先手动执行 sudo ./scripts/ipi_module.sh install。" >&2
+  if sudo -n true >/dev/null 2>&1; then
+    echo "[info] 检测到免密 sudo，自动安装 IPI 模块..."
+    sudo "${ROOT_DIR}/scripts/ipi_module.sh" install
+    if [[ -e "${IPI_DEVICE}" ]]; then
+      IPI_MODULE_INSTALLED_BY_SCRIPT=1
+      echo "[info] IPI 模块安装完成: ${IPI_DEVICE}"
+      return 0
+    fi
+    echo "[warn] sudo 安装流程执行后仍未检测到 ${IPI_DEVICE}，将仅运行 noipi。" >&2
     return 1
   fi
 
-  local answer=""
-  read -r -p "[询问] 未检测到 ${IPI_DEVICE}，现在使用 sudo 自动安装 IPI 模块吗？ [Y/n] " answer
-  answer="${answer:-Y}"
-  case "${answer}" in
-    Y|y|yes|YES)
-      echo "[info] 尝试获取 sudo 权限并安装 IPI 模块..."
-      sudo -v
-      "${ROOT_DIR}/scripts/ipi_module.sh" install
-      if [[ -e "${IPI_DEVICE}" ]]; then
-        echo "[info] IPI 模块安装完成: ${IPI_DEVICE}"
-        return 0
-      fi
-      echo "[warn] 安装流程执行后仍未检测到 ${IPI_DEVICE}，将仅运行 noipi。" >&2
-      return 1
-      ;;
-    *)
-      echo "[info] 用户选择跳过 IPI 模块安装，将仅运行 noipi。"
-      return 1
-      ;;
-  esac
+  echo "[warn] 未检测到 ${IPI_DEVICE}，且 sudo 需要交互密码。请直接使用 'sudo ./run_all.sh' 运行；当前将仅运行 noipi。" >&2
+  return 1
 }
+
+cleanup_ipi_module() {
+  if [[ "${IPI_MODULE_INSTALLED_BY_SCRIPT}" -eq 1 ]]; then
+    echo "[info] 运行结束，自动卸载 IPI 模块..."
+    if ! "${ROOT_DIR}/scripts/ipi_module.sh" uninstall; then
+      echo "[warn] 自动卸载 IPI 模块失败，请手动检查。" >&2
+    fi
+  fi
+}
+
+trap cleanup_ipi_module EXIT
 
 mkdir -p "${RESULT_ROOT}" "${BASE_BUILD_DIR}"
 printf "variant	instr_mode	repeat_id	status	result_tsv	summary_md	build_dir\n" > "${MANIFEST}"
 
 prepare_shared_artifacts() {
+  if [[ -d "${PREBUILT_ROOT}/branch" && -d "${PREBUILT_ROOT}/once" && -d "${PREBUILT_ROOT}/block" && -d "${PREBUILT_ROOT}/full" ]]; then
+    return 0
+  fi
+
   if [[ ! -f "${BASE_BUILD_DIR}/AutoInstrumentPass.so" ]]; then
     local llvm_dir="${LLVM_DIR:-/usr/lib/llvm-18/lib/cmake/llvm}"
     if [[ ! -d "${llvm_dir}" && -d "${ROOT_DIR}/llvm-18/lib/cmake/llvm" ]]; then
@@ -193,11 +226,23 @@ run_one() {
   local rep_id="$3"
   local rep_dir="${RESULT_ROOT}/${variant}/${instr_mode}/rep_${rep_id}"
   local -a args=(--skip-build --iterations="${ITERATIONS}" --run-modes=both --random-input)
+  local use_prebuilt=0
 
-  link_shared_artifacts "${rep_dir}"
+  if [[ -d "${PREBUILT_ROOT}/${instr_mode}" ]]; then
+    use_prebuilt=1
+    rm -rf "${rep_dir}"
+    mkdir -p "${rep_dir}"
+    rsync -a --delete "${PREBUILT_ROOT}/${instr_mode}/" "${rep_dir}/"
+  else
+    link_shared_artifacts "${rep_dir}"
+  fi
 
   if [[ "${FIRST_RUN_DONE}" -eq 1 ]]; then
     args=(--skip-download "${args[@]}")
+  fi
+
+  if [[ "${use_prebuilt}" -eq 1 ]]; then
+    args=(--skip-download --skip-build --iterations="${ITERATIONS}" --run-modes=both --random-input)
   fi
 
   case "${instr_mode}" in
