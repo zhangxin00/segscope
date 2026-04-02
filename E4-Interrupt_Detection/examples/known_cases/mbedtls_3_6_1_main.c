@@ -98,6 +98,9 @@ static int run_core(void) {
 static int run_api(void) {
   mbedtls_mpi A;
   mbedtls_mpi B;
+  mbedtls_mpi Dmpi;
+  mbedtls_mpi Pmpi;
+  mbedtls_mpi Qmpi;
   mbedtls_mpi G;
   mbedtls_mpi X;
   mbedtls_mpi Nmpi;
@@ -106,27 +109,38 @@ static int run_api(void) {
 
   mbedtls_mpi_init(&A);
   mbedtls_mpi_init(&B);
+  mbedtls_mpi_init(&Dmpi);
+  mbedtls_mpi_init(&Pmpi);
+  mbedtls_mpi_init(&Qmpi);
   mbedtls_mpi_init(&G);
   mbedtls_mpi_init(&X);
   mbedtls_mpi_init(&Nmpi);
   mbedtls_mpi_init(&Empi);
   mbedtls_rsa_init(&rsa);
 
-  /* RSA 原始 API：public 操作 */
   if (mbedtls_mpi_lset(&Nmpi, 3233) != 0 ||
-      mbedtls_mpi_lset(&Empi, 17) != 0) {
-    mbedtls_mpi_free(&A);
-    mbedtls_mpi_free(&B);
-    mbedtls_mpi_free(&G);
+      mbedtls_mpi_lset(&Empi, 17) != 0 ||
+      mbedtls_mpi_lset(&Dmpi, 2753) != 0 ||
+      mbedtls_mpi_lset(&Pmpi, 61) != 0 ||
+      mbedtls_mpi_lset(&Qmpi, 53) != 0) {
+      mbedtls_mpi_free(&A);
+      mbedtls_mpi_free(&B);
+      mbedtls_mpi_free(&Dmpi);
+      mbedtls_mpi_free(&Pmpi);
+      mbedtls_mpi_free(&Qmpi);
+      mbedtls_mpi_free(&G);
     mbedtls_mpi_free(&X);
     mbedtls_mpi_free(&Nmpi);
     mbedtls_mpi_free(&Empi);
     mbedtls_rsa_free(&rsa);
     return 1;
   }
-  if (mbedtls_rsa_import(&rsa, &Nmpi, NULL, NULL, NULL, &Empi) != 0) {
+  if (mbedtls_rsa_import(&rsa, &Nmpi, &Pmpi, &Qmpi, &Dmpi, &Empi) != 0) {
     mbedtls_mpi_free(&A);
     mbedtls_mpi_free(&B);
+    mbedtls_mpi_free(&Dmpi);
+    mbedtls_mpi_free(&Pmpi);
+    mbedtls_mpi_free(&Qmpi);
     mbedtls_mpi_free(&G);
     mbedtls_mpi_free(&X);
     mbedtls_mpi_free(&Nmpi);
@@ -137,6 +151,9 @@ static int run_api(void) {
   if (mbedtls_rsa_complete(&rsa) != 0) {
     mbedtls_mpi_free(&A);
     mbedtls_mpi_free(&B);
+    mbedtls_mpi_free(&Dmpi);
+    mbedtls_mpi_free(&Pmpi);
+    mbedtls_mpi_free(&Qmpi);
     mbedtls_mpi_free(&G);
     mbedtls_mpi_free(&X);
     mbedtls_mpi_free(&Nmpi);
@@ -148,6 +165,9 @@ static int run_api(void) {
   if (rsa_len == 0 || rsa_len > 8) {
     mbedtls_mpi_free(&A);
     mbedtls_mpi_free(&B);
+    mbedtls_mpi_free(&Dmpi);
+    mbedtls_mpi_free(&Pmpi);
+    mbedtls_mpi_free(&Qmpi);
     mbedtls_mpi_free(&G);
     mbedtls_mpi_free(&X);
     mbedtls_mpi_free(&Nmpi);
@@ -156,11 +176,17 @@ static int run_api(void) {
     return 1;
   }
   unsigned char rsa_in[8] = {0};
+  unsigned char rsa_mid[8] = {0};
   unsigned char rsa_out[8] = {0};
   rsa_in[rsa_len - 1] = 0x2A;
-  if (mbedtls_rsa_public(&rsa, rsa_in, rsa_out) != 0) {
+  if (mbedtls_rsa_public(&rsa, rsa_in, rsa_mid) != 0 ||
+      mbedtls_rsa_private(&rsa, NULL, NULL, rsa_mid, rsa_out) != 0 ||
+      memcmp(rsa_in, rsa_out, rsa_len) != 0) {
     mbedtls_mpi_free(&A);
     mbedtls_mpi_free(&B);
+    mbedtls_mpi_free(&Dmpi);
+    mbedtls_mpi_free(&Pmpi);
+    mbedtls_mpi_free(&Qmpi);
     mbedtls_mpi_free(&G);
     mbedtls_mpi_free(&X);
     mbedtls_mpi_free(&Nmpi);
@@ -169,11 +195,13 @@ static int run_api(void) {
     return 1;
   }
 
-  /* 使用 RSA 结果触发 gcd / inv_mod 的敏感分支 */
-  if (mbedtls_mpi_read_binary(&A, rsa_out, rsa_len) != 0 ||
+  if (mbedtls_mpi_read_binary(&A, rsa_mid, rsa_len) != 0 ||
       mbedtls_mpi_copy(&B, &Nmpi) != 0) {
     mbedtls_mpi_free(&A);
     mbedtls_mpi_free(&B);
+    mbedtls_mpi_free(&Dmpi);
+    mbedtls_mpi_free(&Pmpi);
+    mbedtls_mpi_free(&Qmpi);
     mbedtls_mpi_free(&G);
     mbedtls_mpi_free(&X);
     mbedtls_mpi_free(&Nmpi);
@@ -184,6 +212,9 @@ static int run_api(void) {
   if (mbedtls_mpi_gcd(&G, &A, &B) != 0) {
     mbedtls_mpi_free(&A);
     mbedtls_mpi_free(&B);
+    mbedtls_mpi_free(&Dmpi);
+    mbedtls_mpi_free(&Pmpi);
+    mbedtls_mpi_free(&Qmpi);
     mbedtls_mpi_free(&G);
     mbedtls_mpi_free(&X);
     mbedtls_mpi_free(&Nmpi);
@@ -194,6 +225,9 @@ static int run_api(void) {
   if (mbedtls_mpi_inv_mod(&X, &A, &B) != 0) {
     mbedtls_mpi_free(&A);
     mbedtls_mpi_free(&B);
+    mbedtls_mpi_free(&Dmpi);
+    mbedtls_mpi_free(&Pmpi);
+    mbedtls_mpi_free(&Qmpi);
     mbedtls_mpi_free(&G);
     mbedtls_mpi_free(&X);
     mbedtls_mpi_free(&Nmpi);
@@ -204,6 +238,9 @@ static int run_api(void) {
 
   mbedtls_mpi_free(&A);
   mbedtls_mpi_free(&B);
+  mbedtls_mpi_free(&Dmpi);
+  mbedtls_mpi_free(&Pmpi);
+  mbedtls_mpi_free(&Qmpi);
   mbedtls_mpi_free(&G);
   mbedtls_mpi_free(&X);
   mbedtls_mpi_free(&Nmpi);

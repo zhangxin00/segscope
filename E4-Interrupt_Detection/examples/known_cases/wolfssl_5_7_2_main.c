@@ -131,7 +131,13 @@ static int run_api(void) {
 
   if (mp_set_int(&n, 3233) != MP_OKAY ||
       mp_set_int(&rsa.n, 3233) != MP_OKAY ||
-      mp_set_int(&rsa.e, 17) != MP_OKAY) {
+      mp_set_int(&rsa.e, 17) != MP_OKAY ||
+      mp_set_int(&rsa.d, 2753) != MP_OKAY ||
+      mp_set_int(&rsa.p, 61) != MP_OKAY ||
+      mp_set_int(&rsa.q, 53) != MP_OKAY ||
+      mp_set_int(&rsa.dP, 53) != MP_OKAY ||
+      mp_set_int(&rsa.dQ, 49) != MP_OKAY ||
+      mp_set_int(&rsa.u, 38) != MP_OKAY) {
     wc_FreeRsaKey(&rsa);
     mp_clear(&a);
     mp_clear(&b);
@@ -141,26 +147,20 @@ static int run_api(void) {
     mp_clear(&tmp);
     return 1;
   }
-  rsa.type = RSA_PUBLIC;
-
-  /* RSA 原始 API：public direct（无 padding） */
+  rsa.type = RSA_PRIVATE;
   byte in_raw[2] = {0x00, 0x2A};
+  byte mid_raw[2] = {0};
   byte out_raw[2] = {0};
+  word32 mid_sz = sizeof(mid_raw);
   word32 out_sz = sizeof(out_raw);
-  if (wc_RsaDirect(in_raw, sizeof(in_raw), out_raw, &out_sz, &rsa,
+  if (wc_RsaDirect(in_raw, sizeof(in_raw), mid_raw, &mid_sz, &rsa,
                    RSA_PUBLIC_ENCRYPT, NULL) < 0 ||
-      out_sz == 0 ||
-      mp_read_unsigned_bin(&rsa_out, out_raw, out_sz) != MP_OKAY) {
-    fprintf(stderr, "[wolfssl] wc_RsaDirect failed, fallback to mp_exptmod\n");
-    mp_int e;
-    mp_init(&e);
-    mp_set_int(&e, 17);
-    if (mp_set_int(&tmp, 65) != MP_OKAY ||
-        mp_exptmod(&tmp, &e, &n, &rsa_out) != MP_OKAY) {
-      fprintf(stderr, "[wolfssl] mp_exptmod fallback failed, use 1\n");
-      mp_set_int(&rsa_out, 1);
-    }
-    mp_clear(&e);
+      wc_RsaDirect(mid_raw, mid_sz, out_raw, &out_sz, &rsa,
+                   RSA_PRIVATE_DECRYPT, NULL) < 0 ||
+      out_sz != sizeof(in_raw) ||
+      memcmp(in_raw, out_raw, sizeof(in_raw)) != 0 ||
+      mp_read_unsigned_bin(&rsa_out, mid_raw, mid_sz) != MP_OKAY) {
+    return 1;
   }
 
   /* 使用 RSA 结果触发 invmod_slow 的敏感分支 */
