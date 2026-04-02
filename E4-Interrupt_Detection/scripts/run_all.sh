@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RESULT_ROOT="${AID_RUN_ALL_RESULT_ROOT:-${ROOT_DIR}/build-linux/unified-benchmarks}"
+BASE_BUILD_DIR="${AID_RUN_ALL_BASE_BUILD_DIR:-${ROOT_DIR}/build-linux/unified-base}"
+REPEAT_COUNT=100
+ITERATIONS=100
+INSTR_MODES=(branch once block full)
+IPI_VARIANTS=(noipi kthread)
+MANIFEST="${RESULT_ROOT}/manifest.tsv"
+FIRST_RUN_DONE=0
+IPI_DEVICE="/dev/ipi_ctl"
+
+usage() {
+  cat <<'EOF'
+用法：
+  ./scripts/run_all.sh
+
+说明：
+  - 无需参数，自动运行统一测试矩阵
+  - 组合维度：插桩模式 × {无 IPI, kthread IPI}
+  - 各程序内部默认循环 100 次
+  - 每个组合外层重复 100 次
+  - 每次运行结果按目录分类存放，便于后续解析
+EOF
+}
+
+if [[ $# -gt 0 ]]; then
+  usage >&2
+  exit 1
+fi
+
+cat <<'EOF'
+[提示] 本脚本会优先自动检查 LLVM 18 / clang 18 / 构建工具，并在 Debian/Ubuntu 环境下尝试通过 sudo 安装缺失依赖。
+[提示] 首轮运行会自动下载待测试程序源码（mbedtls / wolfssl / libjpeg），后续组合会复用已下载内容。
+[提示] 本脚本会尝试运行 noipi 与 kthread IPI 两类测试。
+[提示] 若要完成 kthread IPI 测试，请先在目标机器上用 sudo 安装并加载 IPI 内核模块，确保 /dev/ipi_ctl 可用。
+[提示] 若未安装模块，脚本仍可完成 noipi 部分，但 kthread 部分无法成功。
+EOF
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+ensure_llvm_ready() {
+  local missing=()
+  need_cmd cmake || missing+=(cmake)
+  need_cmd clang-18 || missing+=(clang-18)
+  need_cmd opt-18 || missing+=(opt-18)
+  need_cmd llvm-dis-18 || missing+=(llvm-dis-18)
+
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    echo "[info] 已检测到 LLVM 18 与构建工具。"
+    return 0
+  fi
+
+  echo "[warn] 缺少依赖: ${missing[*]}" >&2
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "[err] 未找到 sudo，无法自动安装 LLVM 18 依赖。" >&2
+    return 1
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "[err] 当前系统不支持 apt-get，无法自动安装 LLVM 18。请手动安装 clang-18 / opt-18 / llvm-dis-18 / llvm-18-dev / cmake。" >&2
+    return 1
+  fi
+
+  if [[ -t 0 ]]; then
+    local answer=""
+    read -r -p "[询问] 缺少 LLVM 18/构建依赖，现在使用 sudo apt-get 自动安装吗？ [Y/n] " answer
+    answer="${answer:-Y}"
+    case "${answer}" in
+      Y|y|yes|YES)
+        ;;
+      *)
+        echo "[err] 用户选择跳过依赖安装，无法继续运行。" >&2
+        return 1
+        ;;
+    esac
+  elif sudo -n true >/dev/null 2>&1; then
+    echo "[info] 检测到免密 sudo，将自动安装 LLVM 18 依赖。"
+  else
+    echo "[err] 当前无交互终端且 sudo 需要密码，无法自动安装 LLVM 18。" >&2
+    return 1
+  fi
+
+  echo "[info] 正在安装 LLVM 18 / clang 18 / 构建工具..."
+  sudo apt-get update
+  sudo apt-get install -y build-essential cmake clang-18 llvm-18 llvm-18-dev llvm-18-tools
+
+  need_cmd cmake || return 1
+  need_cmd clang-18 || return 1
+  need_cmd opt-18 || return 1
+  need_cmd llvm-dis-18 || return 1
+  echo "[info] LLVM 18 依赖安装完成。"
+}
+
+ensure_ipi_ready() {
+  if [[ -e "${IPI_DEVICE}" ]]; then
+    echo "[info] 已检测到 IPI 设备: ${IPI_DEVICE}"
+    return 0
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "[warn] 未找到 sudo，无法自动安装 IPI 模块，将仅运行 noipi。" >&2
+    return 1
+  fi
+
+  if [[ ! -t 0 ]]; then
+    echo "[warn] 当前无交互终端，无法在脚本开头询问 sudo 密码，且未检测到 ${IPI_DEVICE}。" >&2
+    echo "[warn] 将仅运行 noipi。若需 kthread，请先手动执行 sudo ./scripts/ipi_module.sh install。" >&2
+    return 1
+  fi
+
+  local answer=""
+  read -r -p "[询问] 未检测到 ${IPI_DEVICE}，现在使用 sudo 自动安装 IPI 模块吗？ [Y/n] " answer
+  answer="${answer:-Y}"
+  case "${answer}" in
+    Y|y|yes|YES)
+      echo "[info] 尝试获取 sudo 权限并安装 IPI 模块..."
+      sudo -v
+      "${ROOT_DIR}/scripts/ipi_module.sh" install
+      if [[ -e "${IPI_DEVICE}" ]]; then
+        echo "[info] IPI 模块安装完成: ${IPI_DEVICE}"
+        return 0
+      fi
+      echo "[warn] 安装流程执行后仍未检测到 ${IPI_DEVICE}，将仅运行 noipi。" >&2
+      return 1
+      ;;
+    *)
+      echo "[info] 用户选择跳过 IPI 模块安装，将仅运行 noipi。"
+      return 1
+      ;;
+  esac
+}
+
+mkdir -p "${RESULT_ROOT}" "${BASE_BUILD_DIR}"
+printf "variant	instr_mode	repeat_id	status	result_tsv	summary_md	build_dir\n" > "${MANIFEST}"
+
+prepare_shared_artifacts() {
+  if [[ ! -f "${BASE_BUILD_DIR}/AutoInstrumentPass.so" ]]; then
+    local llvm_dir="${LLVM_DIR:-/usr/lib/llvm-18/lib/cmake/llvm}"
+    if [[ ! -d "${llvm_dir}" && -d "${ROOT_DIR}/llvm-18/lib/cmake/llvm" ]]; then
+      llvm_dir="${ROOT_DIR}/llvm-18/lib/cmake/llvm"
+    fi
+    cmake -S "${ROOT_DIR}" -B "${BASE_BUILD_DIR}" -DLLVM_DIR="${llvm_dir}" >/dev/null
+    cmake --build "${BASE_BUILD_DIR}" >/dev/null
+  fi
+
+  if [[ ! -f "${BASE_BUILD_DIR}/ipi_sender" ]]; then
+    local clang_bin=""
+    if command -v clang-18 >/dev/null 2>&1; then
+      clang_bin="$(command -v clang-18)"
+    elif command -v clang >/dev/null 2>&1; then
+      clang_bin="$(command -v clang)"
+    fi
+    if [[ -n "${clang_bin}" ]]; then
+      "${clang_bin}" -O2 -Wall -Wextra \
+        "${ROOT_DIR}/tools/ipi/ipi_sender.c" \
+        -o "${BASE_BUILD_DIR}/ipi_sender"
+    fi
+  fi
+}
+
+link_shared_artifacts() {
+  local rep_dir="$1"
+  mkdir -p "${rep_dir}"
+  ln -sf "${BASE_BUILD_DIR}/AutoInstrumentPass.so" "${rep_dir}/AutoInstrumentPass.so"
+  if [[ -f "${BASE_BUILD_DIR}/ipi_sender" ]]; then
+    ln -sf "${BASE_BUILD_DIR}/ipi_sender" "${rep_dir}/ipi_sender"
+  fi
+  if [[ ! -e "${rep_dir}/AutoInstrumentPass.so" ]]; then
+    echo "[err] 缺少共享插件: ${rep_dir}/AutoInstrumentPass.so" >&2
+    return 1
+  fi
+}
+
+run_one() {
+  local variant="$1"
+  local instr_mode="$2"
+  local rep_id="$3"
+  local rep_dir="${RESULT_ROOT}/${variant}/${instr_mode}/rep_${rep_id}"
+  local -a args=(--skip-build --iterations="${ITERATIONS}" --run-modes=both --random-input)
+
+  link_shared_artifacts "${rep_dir}"
+
+  if [[ "${FIRST_RUN_DONE}" -eq 1 ]]; then
+    args=(--skip-download "${args[@]}")
+  fi
+
+  case "${instr_mode}" in
+    full)
+      args+=(--instrument-full)
+      ;;
+    *)
+      args+=(--secret-instrument="${instr_mode}")
+      ;;
+  esac
+
+  if [[ "${variant}" == "kthread" ]]; then
+    args+=(--with-ipi --ipi-mode=kthread --ipi-duration=auto)
+  fi
+
+  local run_status="ok"
+  if ! AID_BUILD_DIR="${rep_dir}" "${ROOT_DIR}/scripts/known_cases.sh" "${args[@]}"; then
+    run_status="failed"
+    echo "[warn] 组合执行失败: variant=${variant} instr_mode=${instr_mode} repeat=${rep_id}" >&2
+  fi
+  FIRST_RUN_DONE=1
+
+  printf "%s	%s	%s	%s	%s	%s	%s\n" \
+    "${variant}" "${instr_mode}" "${rep_id}" "${run_status}" \
+    "${rep_dir}/known_cases_results.tsv" \
+    "${rep_dir}/known_cases_summary.md" \
+    "${rep_dir}" >> "${MANIFEST}"
+}
+
+ensure_llvm_ready
+
+prepare_shared_artifacts
+
+if ! ensure_ipi_ready; then
+  IPI_VARIANTS=(noipi)
+fi
+
+for variant in "${IPI_VARIANTS[@]}"; do
+  for instr_mode in "${INSTR_MODES[@]}"; do
+    for rep in $(seq -w 1 "${REPEAT_COUNT}"); do
+      run_one "${variant}" "${instr_mode}" "${rep}"
+    done
+  done
+done
+
+echo "统一结果目录: ${RESULT_ROOT}"
+echo "总索引: ${MANIFEST}"
